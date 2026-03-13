@@ -31,7 +31,9 @@ This repo is a fork of `stephengpope/thepopebot`. Two types of changes are manag
 
 ## Upstream Contributions
 
-**RULE: Never send PRs before testing the modifications on our dev-bots instance first.** Build a patched image, deploy it, verify the fix/feature works, then open the PR.
+**RULES:**
+1. Never send PRs before testing the modifications on our dev-bots instance first. Build a patched image, deploy it, verify the fix/feature works.
+2. **Never create upstream PRs without explicit user approval.** Present the diff and PR description to the user first. Only create the PR after they confirm.
 
 ```bash
 git fetch upstream && git merge upstream/main   # sync main first
