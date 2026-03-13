@@ -76,7 +76,7 @@ The deployed instance (`felores/dev-bots`) runs Docker images. To test fork chan
 
 ```bash
 ssh neo4j "cd /tmp && rm -rf thepopebot-build && git clone --depth 1 -b custom https://github.com/felores/thepopebot.git thepopebot-build"
-ssh neo4j "cd /tmp/thepopebot-build/docker/event-handler && docker build -t ghcr.io/felores/thepopebot:event-handler-patched -f Dockerfile.patched ."
+ssh neo4j "cd /tmp/thepopebot-build && docker build -t ghcr.io/felores/thepopebot:event-handler-patched -f docker/event-handler/Dockerfile.patched ."
 ssh neo4j "docker push ghcr.io/felores/thepopebot:event-handler-patched"
 ```
 
@@ -107,8 +107,8 @@ npx esbuild lib/chat/components/chat-input.jsx \
   --bundle=false --format=esm --jsx=automatic \
   --outfile=docker/event-handler/chat-input.js
 
-# 2. COPY the .js file in Dockerfile.patched
-COPY chat-input.js ./node_modules/thepopebot/lib/chat/components/chat-input.js
+# 2. COPY the .js file in Dockerfile.patched (paths relative to repo root)
+COPY docker/event-handler/chat-input.js ./node_modules/thepopebot/lib/chat/components/chat-input.js
 ```
 
 Non-JSX files (e.g. `llm-providers.js`) can be copied directly without compilation.
