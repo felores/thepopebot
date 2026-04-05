@@ -1,8 +1,7 @@
 "use client";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect } from "react";
-import { CirclePlusIcon, PanelLeftIcon, MessageIcon, ClusterIcon, BellIcon, RunnersIcon, ArrowUpCircleIcon, LifeBuoyIcon, GitPullRequestIcon } from "./icons.js";
-import { getUnreadNotificationCount, getPullRequestCount, getAppVersion } from "../actions.js";
+import { CirclePlusIcon, PanelLeftIcon, MessageIcon, ClusterIcon, BellIcon, ContainerIcon, ArrowUpCircleIcon, LifeBuoyIcon, GitPullRequestIcon } from "./icons.js";
 import { SidebarHistory } from "./sidebar-history.js";
 import { SidebarUserNav } from "./sidebar-user-nav.js";
 import { UpgradeDialog } from "./upgrade-dialog.js";
@@ -18,9 +17,7 @@ import {
 } from "./ui/sidebar.js";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip.js";
 import { useChatNav } from "./chat-nav-context.js";
-import { useFeatures } from "./features-context.js";
 function AppSidebar({ user }) {
-  const features = useFeatures();
   const { navigateToChat } = useChatNav();
   const { state, open, setOpenMobile, toggleSidebar } = useSidebar();
   const collapsed = state === "collapsed";
@@ -32,9 +29,10 @@ function AppSidebar({ user }) {
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   useEffect(() => {
     function fetchCounts() {
-      getUnreadNotificationCount().then((count) => setUnreadCount(count)).catch(() => {
-      });
-      getPullRequestCount().then((count) => setPrCount(count)).catch(() => {
+      fetch("/chats/counts").then((r) => r.json()).then(({ notifications, pullRequests }) => {
+        setUnreadCount(notifications || 0);
+        setPrCount(pullRequests || 0);
+      }).catch(() => {
       });
     }
     fetchCounts();
@@ -42,7 +40,7 @@ function AppSidebar({ user }) {
     return () => clearInterval(interval);
   }, []);
   useEffect(() => {
-    getAppVersion().then(({ version: version2, updateAvailable: updateAvailable2, changelog: changelog2 }) => {
+    fetch("/admin/app-version").then((r) => r.json()).then(({ version: version2, updateAvailable: updateAvailable2, changelog: changelog2 }) => {
       setVersion(version2);
       setUpdateAvailable(updateAvailable2);
       setChangelog(changelog2);
@@ -106,7 +104,7 @@ function AppSidebar({ user }) {
             ) }),
             collapsed && /* @__PURE__ */ jsx(TooltipContent, { side: "right", children: "Chats" })
           ] }) }),
-          features?.clusterWorkspace && /* @__PURE__ */ jsx(SidebarMenuItem, { children: /* @__PURE__ */ jsxs(Tooltip, { children: [
+          /* @__PURE__ */ jsx(SidebarMenuItem, { children: /* @__PURE__ */ jsxs(Tooltip, { children: [
             /* @__PURE__ */ jsx(TooltipTrigger, { asChild: true, children: /* @__PURE__ */ jsxs(
               SidebarMenuButton,
               {
@@ -124,15 +122,15 @@ function AppSidebar({ user }) {
             /* @__PURE__ */ jsx(TooltipTrigger, { asChild: true, children: /* @__PURE__ */ jsxs(
               SidebarMenuButton,
               {
-                href: "/runners",
+                href: "/containers",
                 className: collapsed ? "justify-center" : "",
                 children: [
-                  /* @__PURE__ */ jsx(RunnersIcon, { size: 16 }),
-                  !collapsed && /* @__PURE__ */ jsx("span", { children: "Runners" })
+                  /* @__PURE__ */ jsx(ContainerIcon, { size: 16 }),
+                  !collapsed && /* @__PURE__ */ jsx("span", { children: "Containers" })
                 ]
               }
             ) }),
-            collapsed && /* @__PURE__ */ jsx(TooltipContent, { side: "right", children: "Runners" })
+            collapsed && /* @__PURE__ */ jsx(TooltipContent, { side: "right", children: "Containers" })
           ] }) }),
           /* @__PURE__ */ jsx(SidebarMenuItem, { children: /* @__PURE__ */ jsxs(Tooltip, { children: [
             /* @__PURE__ */ jsx(TooltipTrigger, { asChild: true, children: /* @__PURE__ */ jsxs(
