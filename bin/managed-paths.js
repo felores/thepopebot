@@ -4,11 +4,9 @@
 // Paths ending with '/' are directories (all contents are managed).
 export const MANAGED_PATHS = [
   '.github/workflows/',
-
   'docker-compose.yml',
   '.dockerignore',
   '.gitignore',
-  'CLAUDE.md',
 ];
 
 export function isManaged(relPath) {

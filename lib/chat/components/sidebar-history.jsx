@@ -4,10 +4,10 @@ import { useEffect, useLayoutEffect, useState } from 'react';
 import { SidebarHistoryItem } from './sidebar-history-item.js';
 import { SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu } from './ui/sidebar.js';
 import { useChatNav } from './chat-nav-context.js';
-import { getChats, deleteChat, renameChat, starChat } from '../actions.js';
+import { deleteChat, renameChat, starChat } from '../actions.js';
 import { cn } from '../utils.js';
-import { MessageIcon, CodeIcon } from './icons.js';
-import { useFeatures } from './features-context.js';
+import { AgentIcon, CodeIcon, MessageIcon } from './icons.js';
+
 
 function groupChatsByDate(chats) {
   const now = new Date();
@@ -49,13 +49,12 @@ function groupChatsByDate(chats) {
 
 const BASE_FILTERS = [
   { value: 'all', label: 'All', icon: null },
-  { value: 'chat', label: 'Chat', icon: MessageIcon },
+  { value: 'chat', label: 'Agent', icon: AgentIcon },
 ];
 const CODE_FILTER = { value: 'code', label: 'Code', icon: CodeIcon };
 
 function ChatTypeFilter({ filter, setFilter }) {
-  const features = useFeatures();
-  const filters = features?.codeWorkspace ? [...BASE_FILTERS, CODE_FILTER] : BASE_FILTERS;
+  const filters = [...BASE_FILTERS, CODE_FILTER];
   return (
     <div className="flex items-center gap-0.5 px-2 pt-2 mb-1">
       {filters.map(({ value, label, icon: Icon }) => (
@@ -77,7 +76,7 @@ function ChatTypeFilter({ filter, setFilter }) {
   );
 }
 
-const isCodeChat = (chat) => Boolean(chat.codeWorkspaceId);
+const isCodeChat = (chat) => chat.chatMode === 'code';
 
 export function SidebarHistory() {
   const [chats, setChats] = useState([]);
@@ -90,7 +89,8 @@ export function SidebarHistory() {
 
   const loadChats = async () => {
     try {
-      const result = await getChats(51);
+      const r = await fetch('/chats/list?limit=51');
+      const result = await r.json();
       if (result.length > 50) {
         setChats(result.slice(0, 50));
         setHasMore(true);
@@ -120,11 +120,11 @@ export function SidebarHistory() {
 
   useEffect(() => {
     const titleHandler = (e) => {
-      const { chatId, title, codeWorkspaceId } = e.detail;
+      const { chatId, title, codeWorkspaceId, chatMode } = e.detail;
       setChats(prev => {
         const exists = prev.some(c => c.id === chatId);
         if (exists) return prev.map(c => c.id === chatId ? { ...c, title } : c);
-        return [{ id: chatId, title, starred: 0, updatedAt: new Date().toISOString(), codeWorkspaceId: codeWorkspaceId || null }, ...prev];
+        return [{ id: chatId, title, starred: 0, updatedAt: new Date().toISOString(), codeWorkspaceId: codeWorkspaceId || null, chatMode: chatMode || 'agent' }, ...prev];
       });
     };
     const starHandler = (e) => {

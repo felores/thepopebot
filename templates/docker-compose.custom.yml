@@ -1,7 +1,19 @@
-# Custom Docker Compose configuration
+# Custom Docker Compose — SSL with Let's Encrypt wildcard cert
 # This file is NOT managed by thepopebot and won't be overwritten on upgrade.
-# To activate: set COMPOSE_FILE=docker-compose.custom.yml in .env
-# Make your customizations here (TLS, ports, volumes, extra services, etc.)
+#
+# Activate: set COMPOSE_FILE=docker-compose.custom.yml in .env
+# Setup:    npx thepopebot setup-ssl
+#
+# Requires these .env vars (set by setup-ssl):
+#   SSL_DOMAIN          — your domain (e.g., bot.example.com)
+#   SSL_EMAIL           — email for Let's Encrypt notifications
+#   SSL_DNS_PROVIDER    — Traefik DNS provider name (e.g., cloudflare)
+#
+# DNS provider API credentials are stored in .env.traefik (created by setup-ssl).
+# Only this file is passed to the Traefik container — not the main .env.
+#
+# DNS: *.${SSL_DOMAIN} must resolve to this server (A record or CNAME).
+# The setup-ssl command can create this record for you.
 
 services:
   traefik:
@@ -9,20 +21,22 @@ services:
     command:
       - --providers.docker=true
       - --providers.docker.exposedByDefault=false
+      - --providers.file.directory=/traefik-config/
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
-      ## Uncomment the following lines to enable TLS via Let's Encrypt
-      ## (requires LETSENCRYPT_EMAIL in .env):
-      # - --entrypoints.web.http.redirections.entrypoint.to=websecure
-      # - --entrypoints.web.http.redirections.entrypoint.scheme=https
-      # - --certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL}
-      # - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
-      # - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.email=${SSL_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=${SSL_DNS_PROVIDER}
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.resolvers=8.8.8.8:53,8.8.4.4:53
+    env_file: .env.traefik
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik-config:/traefik-config:ro
       - traefik_certs:/letsencrypt
     restart: unless-stopped
 
@@ -31,24 +45,24 @@ services:
     image: ${EVENT_HANDLER_IMAGE_URL:-stephengpope/thepopebot:event-handler-${THEPOPEBOT_VERSION:-latest}}
     volumes:
       - .:/project
-      - ./config:/app/config
+      - ./agent-job:/app/agent-job
+      - ./event-handler:/app/event-handler
       - ./skills:/app/skills
       - ./.env:/app/.env
       - ./data:/app/data
       - ./logs:/app/logs
-      - ./cron:/app/cron
-      - ./triggers:/app/triggers
-      - ./CLAUDE.md:/app/CLAUDE.md
+      - ./traefik-config:/traefik-config
       - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TRAEFIK_CONFIG_DIR=/traefik-config
     labels:
       - traefik.enable=true
-      # Set APP_HOSTNAME in .env to the domain from APP_URL (e.g., mybot.example.com)
       - traefik.http.routers.event-handler.rule=Host(`${APP_HOSTNAME}`)
-      - traefik.http.routers.event-handler.entrypoints=web
+      - traefik.http.routers.event-handler.entrypoints=websecure
+      - traefik.http.routers.event-handler.tls.certresolver=letsencrypt
+      - traefik.http.routers.event-handler.tls.domains[0].main=${SSL_DOMAIN}
+      - traefik.http.routers.event-handler.tls.domains[0].sans=*.${SSL_DOMAIN}
       - traefik.http.services.event-handler.loadbalancer.server.port=80
-      ## Uncomment the following lines to enable TLS via Let's Encrypt:
-      # - traefik.http.routers.event-handler.entrypoints=websecure
-      # - traefik.http.routers.event-handler.tls.certresolver=letsencrypt
     stop_grace_period: 120s
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80/api/ping"]
@@ -58,15 +72,24 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    command: --config /litellm/main.yaml --port 4000
+    volumes:
+      - ./event-handler/litellm:/litellm:ro
+    restart: unless-stopped
+
   runner:
     image: myoung34/github-runner:latest
     deploy:
-      replicas: ${RUNNER_REPLICAS:-2}
+      replicas: ${RUNNER_REPLICAS:-1}
     environment:
       REPO_URL: https://github.com/${GH_OWNER}/${GH_REPO}
       ACCESS_TOKEN: ${GH_TOKEN}
       RUNNER_SCOPE: repo
       LABELS: self-hosted
+      EPHEMERAL: "1"
+      DISABLE_AUTO_UPDATE: "true"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/project
@@ -74,46 +97,3 @@ services:
 
 volumes:
   traefik_certs:
-
-# ──────────────────────────────────────────────────────────────────────
-# Tailscale TLS Example
-# ──────────────────────────────────────────────────────────────────────
-# To use Tailscale HTTPS certs instead of Let's Encrypt:
-#
-# 1. On your Tailscale machine, run:
-#      sudo tailscale cert <your-machine-name>.<tailnet>.ts.net
-#    This creates .crt and .key files in /var/lib/tailscale/certs/
-#
-# 2. Copy traefik-dynamic.yml.example to traefik-dynamic.yml and
-#    replace YOUR_HOSTNAME with your full Tailscale machine name.
-#
-# 3. Replace the traefik service above with:
-#
-#  traefik:
-#    image: traefik:v3
-#    command:
-#      - --providers.docker=true
-#      - --providers.docker.exposedByDefault=false
-#      - --providers.file.filename=/etc/traefik/dynamic.yml
-#      - --entrypoints.web.address=:80
-#      - --entrypoints.web.http.redirections.entrypoint.to=websecure
-#      - --entrypoints.web.http.redirections.entrypoint.scheme=https
-#      - --entrypoints.websecure.address=:443
-#    ports:
-#      - "80:80"
-#      - "443:443"
-#    volumes:
-#      - /var/run/docker.sock:/var/run/docker.sock:ro
-#      - ./traefik-dynamic.yml:/etc/traefik/dynamic.yml:ro
-#      - /var/lib/tailscale/certs:/certs:ro
-#    restart: unless-stopped
-#
-# 4. Update the event-handler labels:
-#
-#  event-handler:
-#    labels:
-#      - traefik.enable=true
-#      - traefik.http.routers.event-handler.rule=Host(`${APP_HOSTNAME}`)
-#      - traefik.http.routers.event-handler.entrypoints=websecure
-#      - traefik.http.routers.event-handler.tls=true
-#      - traefik.http.services.event-handler.loadbalancer.server.port=80

@@ -193,7 +193,7 @@ export function TriggersPage() {
           </div>
           <p className="text-sm font-medium mb-1">No triggers configured</p>
           <p className="text-xs text-muted-foreground max-w-sm">
-            Add webhook triggers by editing <span className="font-mono">config/TRIGGERS.json</span> in your project.
+            Add webhook triggers by editing <span className="font-mono">event-handler/TRIGGERS.json</span> in your project.
           </p>
         </div>
       ) : (

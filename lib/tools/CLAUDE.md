@@ -12,17 +12,21 @@ Calls Docker Engine API directly through `/var/run/docker.sock` using Node's `ht
 
 **Image pull on demand**: Checks if image exists locally before pulling. Avoids pre-pulling at startup.
 
-## create-job.js — Agent Job Creation
+**`buildAgentAuthEnv(agent)`**: Resolves coding agent type → auth environment variables from the settings DB. Handles OAuth vs API key auth modes, multi-provider resolution (builtin + custom), and model overrides. Each agent type (claude-code, pi, gemini-cli, codex-cli, opencode) has its own credential resolution path. OAuth tokens use LRU rotation via `getNextOAuthToken()`. All credentials come from the DB, not `.env` or GitHub secrets.
+
+## create-agent-job.js — Agent Job Creation
 
 **Structured output for titles**: Uses `model.withStructuredOutput(z.object({ title }))` to force JSON output and avoid thinking-token leaks with extended-thinking models. Two-tier fallback: LLM → truncated description → first non-empty line with markdown heading syntax stripped.
 
-**Git tree construction**: Uses GitHub's Git Data API (not REST content API) to create commits. Builds a tree with `base_tree` to preserve existing files, adding only `logs/{jobId}/job.config.json`. This file is the single source of truth for job metadata.
+**Git tree construction**: Uses GitHub's Git Data API (not REST content API) to create commits. Builds a tree with `base_tree` to preserve existing files, adding only `logs/{agentJobId}/agent-job.config.json`. This file is the single source of truth for job metadata.
+
+**Local Docker launch**: After pushing the `agent-job/*` branch, launches a Docker container locally (fire-and-forget). Uses a named volume for workspace, cleaned up after container exits.
 
 ## github.js — GitHub API & PAT Probing
 
 **Fine-grained PAT access probing**: `/user/repos` shows repos with implicit metadata:read even without write access. To detect actual write access, probes with a dummy ref creation using null SHA (`0000...`). Response `422` (invalid SHA) = has write access. Response `403` = no access. Side-effect-free — nothing is created.
 
-**Job status counting**: Filters workflow runs to only `job/*` branches. Extracts job ID from `run.head_branch.slice(4)`. Counts `queued` and `running` separately from filtered results.
+**Agent job status**: Checks for running Docker containers matching the `thepopebot-agent-job-` prefix. Agent jobs run locally, not via GitHub Actions.
 
 ## telegram.js — Telegram Bot Integration
 

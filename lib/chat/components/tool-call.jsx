@@ -36,8 +36,8 @@ export function ToolCall({ part }) {
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted/50 rounded-lg"
       >
         <WrenchIcon size={14} className="text-muted-foreground shrink-0" />
-        <span className="font-medium text-foreground">{displayName}</span>
-        <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground min-w-0 truncate">{displayName}</span>
+        <span className="ml-auto shrink-0 flex items-center gap-1.5 text-xs text-muted-foreground">
           {isRunning && (
             <>
               <SpinnerIcon size={12} />

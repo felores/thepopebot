@@ -11,7 +11,7 @@ Skills work with both Pi and Claude Code — they share the same `skills/active/
 ## How skills work
 
 **Where they live**:
-- `skills/` — all available skills
+- `skills/library/` — all available skills
 - `skills/active/` — symlinks to activated skills (both agents read from here)
 
 **How they load**: On-demand (progressive disclosure). At startup, the agent scans skill directories and puts **only the name + description** from each SKILL.md frontmatter into the system prompt. The full instructions are NOT loaded until the agent decides the skill is relevant and reads the file.
@@ -22,7 +22,7 @@ Skills work with both Pi and Claude Code — they share the same `skills/active/
 2. User says "search for python async tutorials"
 3. Agent sees the description, decides brave-search is relevant
 4. Agent reads the full SKILL.md to learn the commands
-5. Agent runs: `skills/brave-search/search.js "python async tutorials"`
+5. Agent runs: `skills/library/brave-search/search.js "python async tutorials"`
 6. `search.js` runs as a child process, reads `$BRAVE_API_KEY` from the environment, calls the Brave Search API, prints results to stdout
 7. Agent reads results, responds to user
 
@@ -33,10 +33,10 @@ Skills work with both Pi and Claude Code — they share the same `skills/active/
 Real example: brave-search
 
 ```
-skills/brave-search/
+skills/library/brave-search/
 ├── SKILL.md          ← instructions for both agent and human
 ├── package.json      ← declares npm dependencies
-├── search.js         ← Node.js script that calls Brave Search API, prints results to stdout
+├─�� search.js         ← Node.js script that calls Brave Search API, prints results to stdout
 └── content.js        ← Node.js script that fetches a URL, extracts readable markdown
 ```
 
@@ -49,19 +49,19 @@ description: Web search and content extraction via Brave Search API. Use for sea
 # Brave Search
 
 ## Setup
-cd skills/brave-search && npm install
+cd skills/library/brave-search && npm install
 
 ## Search
-skills/brave-search/search.js "query"              # Basic search (5 results)
-skills/brave-search/search.js "query" -n 10        # More results (max 20)
-skills/brave-search/search.js "query" --content    # Include page content as markdown
-skills/brave-search/search.js "query" --freshness pw  # Results from last week
+skills/library/brave-search/search.js "query"              # Basic search (5 results)
+skills/library/brave-search/search.js "query" -n 10        # More results (max 20)
+skills/library/brave-search/search.js "query" --content    # Include page content as markdown
+skills/library/brave-search/search.js "query" --freshness pw  # Results from last week
 
 ## Extract Page Content
-skills/brave-search/content.js https://example.com
+skills/library/brave-search/content.js https://example.com
 ```
 
-Skills use project-root-relative paths (e.g., `skills/brave-search/search.js`).
+Skills use project-root-relative paths (e.g., `skills/library/brave-search/search.js`).
 
 **Setup**: Run `npm install` once in the skill directory. The `package.json` declares what dependencies the scripts need. In Docker, dependencies are installed automatically by the entrypoint.
 
@@ -82,7 +82,7 @@ description: One sentence describing what the skill does and when to use it.
 ## Usage
 
 ```bash
-skills/skill-name/script.sh <args>
+skills/library/skill-name/script.sh <args>
 ```
 ```
 
@@ -90,7 +90,7 @@ skills/skill-name/script.sh <args>
 - **`description`** — appears in the system prompt under "Active skills"
 - **Body** — full usage instructions the agent reads on-demand
 
-Use project-root-relative paths in all examples (e.g., `skills/skill-name/script.sh`).
+Use project-root-relative paths in all examples (e.g., `skills/library/skill-name/script.sh`).
 
 ---
 
@@ -99,7 +99,7 @@ Use project-root-relative paths in all examples (e.g., `skills/skill-name/script
 Skills are activated by symlinking into `skills/active/`:
 
 ```bash
-ln -s ../skill-name skills/active/skill-name
+ln -s ../library/skill-name skills/active/skill-name
 ```
 
 Both `.pi/skills` and `.claude/skills` point to `skills/active/`, so one activation controls both agents.
@@ -112,7 +112,7 @@ To deactivate: `rm skills/active/skill-name`
 
 ### Simple bash skill (most common pattern)
 
-**skills/transcribe/SKILL.md:**
+**skills/library/transcribe/SKILL.md:**
 ```markdown
 ---
 name: transcribe
@@ -128,11 +128,11 @@ Requires GROQ_API_KEY environment variable.
 
 ## Usage
 ```bash
-skills/transcribe/transcribe.sh <audio-file>
+skills/library/transcribe/transcribe.sh <audio-file>
 ```
 ```
 
-**skills/transcribe/transcribe.sh:**
+**skills/library/transcribe/transcribe.sh:**
 ```bash
 #!/bin/bash
 if [ -z "$1" ]; then echo "Usage: transcribe.sh <audio-file>"; exit 1; fi
@@ -150,36 +150,18 @@ The built-in `brave-search` skill uses Node.js for HTML parsing (jsdom, readabil
 
 ---
 
-## browser-tools skill
-
-Uses **Chrome DevTools Protocol (CDP) directly** — not Playwright, not Puppeteer. Connects to Chrome running with `--remote-debugging-port=9222`. Standalone JS scripts:
-
-- `browser-start.js` — launch Chrome with remote debugging (`--profile` flag copies user's Chrome profile for cookies/logins)
-- `browser-nav.js` — navigate to URLs
-- `browser-content.js` — extract page content
-- `browser-eval.js` — execute JS in the active tab
-- `browser-screenshot.js` — take screenshots
-- `browser-pick.js` — interactive element selector
-- `browser-cookies.js` — manage cookies
-- `browser-hn-scraper.js` — Hacker News scraper
-
-Use `browser-start.js` to launch Chrome before other scripts. The `--profile` flag copies your default Chrome profile so the browser has your existing cookies and logins.
-
----
-
 ## Bundled skills
 
-Skills are bundled in `templates/skills/` and scaffolded into user projects by `npx thepopebot init`:
+Skills are bundled in `templates/skills/library/` and scaffolded into user projects by `npx thepopebot init`:
 
 | Skill | Description |
 |-------|-------------|
 | brave-search | Web search and content extraction via Brave Search API |
-| browser-tools | Chrome automation via CDP (navigate, screenshot, eval, scrape) |
+| browser-tools | Browser automation via Puppeteer (screenshots, navigation, interaction) |
 | google-docs | Create and manage Google Docs on a shared drive via service account |
 | google-drive | Google Drive operations (list, upload, download, delete) via service account |
 | kie-ai | AI image and video generation via kie.ai API |
-| llm-secrets | Manage LLM-accessible secrets |
-| modify-self | Self-modification capabilities |
+| get-secret | List available LLM-accessible credentials |
 | youtube-transcript | YouTube transcript extraction |
 
 ## Where to find more skills
@@ -194,16 +176,7 @@ These skills follow the **Agent Skills standard** (SKILL.md format), compatible 
 
 ## Credential setup
 
-If a skill needs an API key:
-- `npx thepopebot set-agent-llm-secret <KEY_NAME> <value>` — creates a GitHub secret with `AGENT_LLM_` prefix, exposed as an env var in the Docker container
-- Also add to `.env` for local development
-- Keys can be rotated later with the same command
-
-**Multi-line secrets** (e.g., JSON service account files): omit the value argument and pipe the file via stdin:
-```bash
-npx thepopebot set-agent-llm-secret GOOGLE_CREDENTIALS < credentials.json
-```
-Avoid `$(cat credentials.json)` — it can break on special characters and newlines.
+If a skill needs an API key, add it at Admin > Event Handler > Agent Jobs. The secret will be injected as an env var into Docker containers. The agent can discover available secrets via the `get-secret` skill.
 
 ---
 
@@ -217,6 +190,6 @@ Skills run via bash. The agent has access to environment variables, which means 
 
 | Resource | URL |
 |----------|-----|
-| Bundled skills | `templates/skills/` (in this repo) |
+| Bundled skills | `templates/skills/library/` (in this repo) |
 | External skills repo | https://github.com/badlogic/pi-skills |
 | Skills format docs | https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/skills.md |

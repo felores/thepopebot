@@ -82,8 +82,8 @@ export function ApiKeysListPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <div>
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div className="min-w-0">
           <h2 className="text-base font-medium">API Keys</h2>
           <p className="text-sm text-muted-foreground">Authenticate external requests to /api endpoints via the x-api-key header.</p>
         </div>
@@ -137,7 +137,7 @@ export function ApiKeysListPage() {
       {newKey && (
         <div className="rounded-lg border border-green-500/30 bg-green-500/5 p-4 mb-4">
           <div className="flex items-start justify-between gap-3 mb-2">
-            <p className="text-sm font-medium text-green-600 dark:text-green-400">
+            <p className="text-sm font-medium text-green-500">
               API key created — copy it now. You won't be able to see it again.
             </p>
             <button
@@ -170,7 +170,7 @@ export function ApiKeysListPage() {
                     {k.keyPrefix}...
                     <span className="font-sans ml-2">
                       Created {formatDate(k.createdAt)}
-                      {k.lastUsedAt && <span> · Last used {timeAgo(k.lastUsedAt)}</span>}
+                      <span> · {k.lastUsedAt ? `Last used ${timeAgo(k.lastUsedAt)}` : 'Never used'}</span>
                     </span>
                   </div>
                   </div>

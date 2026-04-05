@@ -1,20 +1,24 @@
 # Credentials - NEVER commit these
 .env
 .env.local
+.env.traefik
 *.pem
 *.key
 
 # Claude Code
 .claude/*
 
+# Playwright MCP
+.playwright-mcp/
+
 # Pi system prompt (generated at runtime from SOUL.md)
 .pi/SYSTEM.md
 
-# Skills dependencies (installed at runtime in Docker for correct arch)
-skills/*/node_modules/
+# Dynamically activated skills (created at container runtime, not user config)
+skills/active/agent-job-secrets
 
 # Database
-data/
+/data/
 
 # Node
 node_modules/

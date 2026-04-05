@@ -2,11 +2,20 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { PageLayout } from './page-layout.js';
-import { MessageIcon, CodeIcon, TrashIcon, SearchIcon, PlusIcon, MoreHorizontalIcon, StarIcon, StarFilledIcon, PencilIcon } from './icons.js';
+import { AgentIcon, CodeIcon, TrashIcon, SearchIcon, PlusIcon, MoreHorizontalIcon, StarIcon, StarFilledIcon, PencilIcon } from './icons.js';
 import { getChats, deleteChat, renameChat, starChat } from '../actions.js';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from './ui/dropdown-menu.js';
 import { ConfirmDialog } from './ui/confirm-dialog.js';
+
 import { cn } from '../utils.js';
+
+const isCodeChat = (chat) => chat.chatMode === 'code';
+
+const BASE_FILTERS = [
+  { value: 'all', label: 'All', icon: null },
+  { value: 'chat', label: 'Agent', icon: AgentIcon },
+];
+const CODE_FILTER = { value: 'code', label: 'Code', icon: CodeIcon };
 
 function groupChatsByDate(chats) {
   const now = new Date();
@@ -63,6 +72,8 @@ export function ChatsPage({ session }) {
   const [chats, setChats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const filters = [...BASE_FILTERS, CODE_FILTER];
 
   const navigateToChat = (id) => {
     window.location.href = id ? `/chat/${id}` : '/';
@@ -85,11 +96,11 @@ export function ChatsPage({ session }) {
 
   useEffect(() => {
     const titleHandler = (e) => {
-      const { chatId, title, codeWorkspaceId } = e.detail;
+      const { chatId, title, codeWorkspaceId, chatMode } = e.detail;
       setChats(prev => {
         const exists = prev.some(c => c.id === chatId);
         if (exists) return prev.map(c => c.id === chatId ? { ...c, title } : c);
-        return [{ id: chatId, title, starred: 0, updatedAt: new Date().toISOString(), codeWorkspaceId: codeWorkspaceId || null }, ...prev];
+        return [{ id: chatId, title, starred: 0, updatedAt: new Date().toISOString(), codeWorkspaceId: codeWorkspaceId || null, chatMode: chatMode || 'agent' }, ...prev];
       });
     };
     const starHandler = (e) => {
@@ -145,9 +156,13 @@ export function ChatsPage({ session }) {
     }
   };
 
+  const typeFiltered = !filter || filter === 'all' ? chats
+    : filter === 'code' ? chats.filter(isCodeChat)
+    : chats.filter((c) => !isCodeChat(c));
+
   const filtered = query
-    ? chats.filter((c) => c.title?.toLowerCase().includes(query.toLowerCase()))
-    : chats;
+    ? typeFiltered.filter((c) => c.title?.toLowerCase().includes(query.toLowerCase()))
+    : typeFiltered;
 
   const grouped = groupChatsByDate(filtered);
 
@@ -179,6 +194,25 @@ export function ChatsPage({ session }) {
         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none">
           <SearchIcon size={16} />
         </div>
+      </div>
+
+      {/* Type filter */}
+      <div className="flex items-center gap-1 mb-4">
+        {filters.map(({ value, label, icon: Icon }) => (
+          <button
+            key={value}
+            onClick={() => setFilter(value)}
+            className={cn(
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+              filter === value
+                ? 'bg-foreground text-background'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+            )}
+          >
+            {Icon && <Icon size={14} />}
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Count */}
@@ -278,7 +312,10 @@ function ChatRow({ chat, onNavigate, onDelete, onStar, onRename }) {
         }
       }}
     >
-      {chat.codeWorkspaceId && chat.containerName ? <CodeIcon size={16} /> : <MessageIcon size={16} />}
+      <span className="relative">
+        {chat.chatMode === 'code' ? <CodeIcon size={16} /> : <AgentIcon size={16} />}
+        {chat.hasChanges ? <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-destructive" /> : null}
+      </span>
       <div className="flex-1 min-w-0">
         {editing ? (
           <input

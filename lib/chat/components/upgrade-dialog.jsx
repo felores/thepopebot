@@ -44,7 +44,7 @@ export function UpgradeDialog({ open, onClose, version, updateAvailable, changel
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/50" onClick={handleClose} />
-      <div className="relative z-50 w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
+      <div className="relative z-50 w-full max-w-md mx-4 rounded-lg border border-border bg-background p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
         {result === 'success' ? (
           <>
             <div className="flex items-center justify-between mb-4">
@@ -70,7 +70,7 @@ export function UpgradeDialog({ open, onClose, version, updateAvailable, changel
               </p>
               <p>
                 You can monitor progress from the{' '}
-                <a href="/runners" className="text-emerald-500 hover:underline font-medium">Runners</a> page.
+                <a href="/containers" className="text-emerald-500 hover:underline font-medium">Containers</a> page.
               </p>
               <p>
                 The site may be briefly unresponsive for a few seconds when the server restarts.
@@ -158,7 +158,7 @@ export function UpgradeDialog({ open, onClose, version, updateAvailable, changel
             </button>
 
             {result === 'error' && (
-              <p className="text-xs text-red-400 mt-3">
+              <p className="text-xs text-destructive mt-3">
                 Failed to trigger the upgrade workflow. Check that your GitHub token has workflow permissions.
               </p>
             )}

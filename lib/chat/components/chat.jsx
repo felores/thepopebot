@@ -7,17 +7,61 @@ import { Messages } from './messages.js';
 import { ChatInput } from './chat-input.js';
 import { ChatHeader } from './chat-header.js';
 import { Greeting } from './greeting.js';
-import { CodeModeToggle } from './code-mode-toggle.js';
-import { getRepositories, getBranches } from '../actions.js';
+import { RepoBranchPicker, WorkspaceBar } from './code-mode-toggle.js';
+import { DiffViewer } from './diff-viewer.js';
+import { cn } from '../utils.js';
 
-export function Chat({ chatId, initialMessages = [], workspace = null }) {
+const fetchRepositories = () =>
+  fetch('/code/repositories')
+    .then(r => r.json())
+    .catch(() => []);
+
+const fetchBranches = (repoFullName) =>
+  fetch(`/code/branches?repo=${encodeURIComponent(repoFullName)}`)
+    .then(r => r.json())
+    .catch(() => []);
+
+export function Chat({ chatId, initialMessages = [], workspace = null, chatMode = null }) {
   const [input, setInput] = useState('');
   const [files, setFiles] = useState([]);
   const hasNavigated = useRef(false);
-  const [codeMode, setCodeMode] = useState(!!workspace);
+  const [codeMode, setCodeMode] = useState(chatMode === 'code');
+  const [codeModeType, setCodeModeType] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem(`codeModeType:${chatId}`);
+      if (stored === 'plan' || stored === 'code' || stored === 'job') return stored;
+    }
+    return 'code';
+  });
+
+  // Persist codeModeType to localStorage per chat
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`codeModeType:${chatId}`, codeModeType);
+    }
+  }, [chatId, codeModeType]);
+  const [defaultRepo, setDefaultRepo] = useState(null);
   const [repo, setRepo] = useState(workspace?.repo || '');
   const [branch, setBranch] = useState(workspace?.branch || '');
   const [workspaceState, setWorkspaceState] = useState(workspace);
+  const [diffStats, setDiffStats] = useState(null);
+  const [showDiff, setShowDiff] = useState(false);
+
+  // Fetch default repo for agent mode on mount
+  // Uses fetch instead of server action to avoid Next.js page revalidation
+  useEffect(() => {
+    fetch('/code/default-repo')
+      .then(res => res.json())
+      .then(({ repo: r }) => {
+        if (r) {
+          setDefaultRepo(r);
+          if (!workspace && !repo && !codeMode) {
+            setRepo(r);
+            setBranch('main');
+          }
+        }
+      }).catch(() => {});
+  }, []);
 
   // Auto-forward to interactive workspace — only on toggle, not on mount
   const hasMounted = useRef(false);
@@ -31,8 +75,8 @@ export function Chat({ chatId, initialMessages = [], workspace = null }) {
     }
   }, [workspaceState?.containerName]);
 
-  const codeModeRef = useRef({ codeMode, repo, branch, workspaceId: workspaceState?.id });
-  codeModeRef.current = { codeMode, repo, branch, workspaceId: workspaceState?.id };
+  const codeModeRef = useRef({ codeMode, codeModeType, repo, branch, workspaceId: workspaceState?.id });
+  codeModeRef.current = { codeMode, codeModeType, repo, branch, workspaceId: workspaceState?.id };
 
   const transport = useMemo(
     () =>
@@ -40,9 +84,11 @@ export function Chat({ chatId, initialMessages = [], workspace = null }) {
         api: '/stream/chat',
         body: () => ({
           chatId,
-          ...(codeModeRef.current.codeMode && codeModeRef.current.repo && codeModeRef.current.branch
-            ? { codeMode: true, repo: codeModeRef.current.repo, branch: codeModeRef.current.branch, workspaceId: codeModeRef.current.workspaceId }
-            : {}),
+          codeMode: codeModeRef.current.codeMode,
+          codeModeType: codeModeRef.current.codeModeType,
+          repo: codeModeRef.current.repo,
+          branch: codeModeRef.current.branch,
+          workspaceId: codeModeRef.current.workspaceId,
         }),
       }),
     [chatId]
@@ -62,6 +108,28 @@ export function Chat({ chatId, initialMessages = [], workspace = null }) {
     transport,
     onError: (err) => console.error('Chat error:', err),
   });
+
+  // Fetch diff stats on mount (existing workspace) and when AI finishes responding
+  const prevStatus = useRef(status);
+  useEffect(() => {
+    if (!workspaceState?.id) return;
+    const isMount = prevStatus.current === status;
+    const isFinished = prevStatus.current !== 'ready' && status === 'ready';
+    if (isMount || isFinished) {
+      fetch(`/code/workspace-diff/${workspaceState.id}`)
+        .then(r => r.json())
+        .then(r => {
+          if (r.success) {
+            setDiffStats(r);
+            if (r.currentBranch) {
+              setWorkspaceState(prev => prev && r.currentBranch !== prev.featureBranch ? { ...prev, featureBranch: r.currentBranch } : prev);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+    prevStatus.current = status;
+  }, [status, workspaceState?.id]);
 
   // After first message sent, update URL and notify sidebar
   useEffect(() => {
@@ -96,7 +164,7 @@ export function Chat({ chatId, initialMessages = [], workspace = null }) {
         .then(res => res.json())
         .then(({ title, codeWorkspaceId, featureBranch }) => {
           if (title) {
-            window.dispatchEvent(new CustomEvent('chatTitleUpdated', { detail: { chatId, title, codeWorkspaceId } }));
+            window.dispatchEvent(new CustomEvent('chatTitleUpdated', { detail: { chatId, title, codeWorkspaceId, chatMode: codeMode ? 'code' : 'agent' } }));
           }
           if (codeWorkspaceId) {
             setWorkspaceState({ id: codeWorkspaceId, featureBranch, repo, branch, containerName: null });
@@ -141,28 +209,58 @@ export function Chat({ chatId, initialMessages = [], workspace = null }) {
 
   // Interactive mode is active if containerName is set
   const isInteractiveActive = !!workspaceState?.containerName;
+  const [togglingMode, setTogglingMode] = useState(false);
 
-  // In code mode, disable send until repo+branch selected
-  const codeModeCanSend = !codeMode || (!!repo && !!branch);
+  const handleInteractiveToggle = useCallback(async () => {
+    if (!workspaceState?.id || togglingMode || isInteractiveActive) return;
+    setTogglingMode(true);
+    try {
+      const { startInteractiveMode } = await import('../../code/actions.js');
+      const result = await startInteractiveMode(workspaceState.id);
+      if (result.containerName) {
+        setWorkspaceState(prev => ({ ...prev, containerName: result.containerName }));
+      }
+    } catch (err) {
+      console.error('Failed to toggle mode:', err);
+    } finally {
+      setTogglingMode(false);
+    }
+  }, [workspaceState?.id, togglingMode, isInteractiveActive]);
 
-  const codeModeToggle = (
-    <CodeModeToggle
-      enabled={codeMode}
-      onToggle={setCodeMode}
-      repo={repo}
-      onRepoChange={setRepo}
-      branch={branch}
-      onBranchChange={setBranch}
-      locked={messages.length > 0}
-      getRepositories={getRepositories}
-      getBranches={getBranches}
-      workspace={workspaceState}
-      isInteractiveActive={isInteractiveActive}
-      onWorkspaceUpdate={(containerName) => {
-        setWorkspaceState(prev => ({ ...prev, containerName }));
-      }}
-    />
-  );
+  const codeModeSettings = {
+    mode: codeModeType,
+    onModeChange: setCodeModeType,
+    isInteractiveActive,
+    onInteractiveToggle: handleInteractiveToggle,
+    togglingMode,
+  };
+
+  const handleBranchChange = useCallback((newBranch) => {
+    setBranch(newBranch);
+    if (workspaceState?.id) {
+      fetch('/code/workspace-branch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId: workspaceState.id, branch: newBranch }),
+      }).catch(() => {});
+    }
+  }, [workspaceState?.id]);
+
+  const handleDiffStatsRefresh = useCallback(async () => {
+    if (!workspaceState?.id) return null;
+    try {
+      const r = await fetch(`/code/workspace-diff/${workspaceState.id}`);
+      const data = await r.json();
+      if (data.success) {
+        setDiffStats(data);
+        if (data.currentBranch) {
+          setWorkspaceState(prev => prev && data.currentBranch !== prev.featureBranch ? { ...prev, featureBranch: data.currentBranch } : prev);
+        }
+        return data;
+      }
+    } catch {}
+    return null;
+  }, [workspaceState?.id]);
 
   return (
     <div className="flex h-svh flex-col">
@@ -172,7 +270,7 @@ export function Chat({ chatId, initialMessages = [], workspace = null }) {
           <div className="w-full max-w-4xl">
             <Greeting codeMode={codeMode} />
             {error && (
-              <div className="mt-4 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+              <div className="mt-4 mb-4 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
                 {error.message || 'Something went wrong. Please try again.'}
               </div>
             )}
@@ -185,66 +283,175 @@ export function Chat({ chatId, initialMessages = [], workspace = null }) {
                 stop={stop}
                 files={files}
                 setFiles={setFiles}
-                canSendOverride={codeModeCanSend ? undefined : false}
+                codeMode={codeMode}
+                codeModeSettings={codeModeSettings}
               />
             </div>
             <div className="mt-5 pb-8">
-              {codeModeToggle}
+              {codeMode && (
+                <RepoBranchPicker
+                  repo={repo}
+                  onRepoChange={setRepo}
+                  branch={branch}
+                  onBranchChange={handleBranchChange}
+                  getRepositories={fetchRepositories}
+                  getBranches={fetchBranches}
+                />
+              )}
+              <div className="flex flex-wrap items-center justify-center gap-3 mt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !codeMode;
+                    setCodeMode(next);
+                    if (next) {
+                      // Entering code mode — clear agent mode's default repo
+                      setRepo('');
+                      setBranch('');
+                    } else if (defaultRepo) {
+                      setRepo(defaultRepo);
+                      setBranch('main');
+                    } else {
+                      setRepo('');
+                      setBranch('');
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 group"
+                  role="switch"
+                  aria-checked={codeMode}
+                  aria-label="Toggle Code mode"
+                >
+                  <span className={cn(
+                    'text-xs transition-colors',
+                    !codeMode ? 'font-bold text-foreground' : 'font-medium text-muted-foreground group-hover:text-foreground'
+                  )}>
+                    Agent
+                  </span>
+                  <span
+                    className={cn(
+                      'relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200',
+                      codeMode ? 'bg-primary' : 'bg-muted-foreground/30'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200',
+                        codeMode && 'translate-x-4'
+                      )}
+                    />
+                  </span>
+                  <span className={cn(
+                    'text-xs transition-colors',
+                    codeMode ? 'font-bold text-foreground' : 'font-medium text-muted-foreground group-hover:text-foreground'
+                  )}>
+                    Code
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
       ) : (
-        <>
-          <Messages messages={messages} status={status} onRetry={handleRetry} onEdit={handleEdit} />
-          {error && (
-            <div className="mx-auto w-full max-w-4xl px-2 md:px-4">
-              <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-                {error.message || 'Something went wrong. Please try again.'}
-              </div>
-            </div>
+        <div className="flex flex-1 flex-col min-h-0 overflow-hidden relative">
+          {showDiff && workspaceState?.id && (
+            <div className="absolute inset-0 z-10 bg-black/50" />
           )}
-          {codeMode ? (
-            <div className="mx-auto w-full max-w-4xl px-4 pb-4 md:px-6">
-              {isInteractiveActive && (
-                <a
-                  href={`/code/${workspaceState?.id}`}
-                  className="flex items-center justify-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 mb-2 text-sm font-medium text-primary hover:bg-primary/10 transition-colors"
-                >
-                  <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-                  Click here to access Interactive Mode
-                </a>
-              )}
-              <div className="rounded-t-xl border border-b-0 border-border px-3 py-2.5">
-                {codeModeToggle}
+          {showDiff && workspaceState?.id ? (
+            <>
+              <div className="flex-1 min-h-0 z-20 p-0 md:p-4 flex flex-col">
+                <DiffViewer
+                  workspaceId={workspaceState.id}
+                  diffStats={diffStats}
+                  onClose={() => setShowDiff(false)}
+                />
               </div>
-              <ChatInput
-                bare
-                input={input}
-                setInput={setInput}
-                onSubmit={handleSend}
-                status={status}
-                stop={stop}
-                files={files}
-                setFiles={setFiles}
-                disabled={isInteractiveActive}
-                placeholder={isInteractiveActive ? 'Interactive mode is active.' : 'Send a message...'}
-                className="rounded-t-none"
-              />
-            </div>
+              <div className="z-20 px-4 pb-4">
+                <div className="mx-auto w-full max-w-4xl">
+                  {workspaceState && (
+                    <div className="rounded-t-xl border border-b-0 border-border px-3 py-2.5 bg-background">
+                      <WorkspaceBar
+                        repo={repo}
+                        branch={branch}
+                        onBranchChange={handleBranchChange}
+                        getBranches={fetchBranches}
+                        workspace={workspaceState}
+                        diffStats={diffStats}
+                        onDiffStatsRefresh={handleDiffStatsRefresh}
+                        onShowDiff={() => setShowDiff(true)}
+                      />
+                    </div>
+                  )}
+                  <ChatInput
+                    bare
+                    input={input}
+                    setInput={setInput}
+                    onSubmit={handleSend}
+                    status={status}
+                    stop={stop}
+                    files={files}
+                    setFiles={setFiles}
+                    disabled={isInteractiveActive}
+                    placeholder={isInteractiveActive ? 'Interactive mode is active.' : 'Send a message...'}
+                    className={workspaceState ? "rounded-t-none" : undefined}
+                    codeMode={codeMode}
+                    codeModeSettings={codeModeSettings}
+                  />
+                </div>
+              </div>
+            </>
           ) : (
-            <div className="px-2.5 md:px-0">
-              <ChatInput
-                input={input}
-                setInput={setInput}
-                onSubmit={handleSend}
-                status={status}
-                stop={stop}
-                files={files}
-                setFiles={setFiles}
-              />
-            </div>
+            <>
+              <Messages messages={messages} status={status} onRetry={handleRetry} onEdit={handleEdit} />
+              {error && (
+                <div className="mx-auto w-full max-w-4xl px-2 md:px-4">
+                  <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+                    {error.message || 'Something went wrong. Please try again.'}
+                  </div>
+                </div>
+              )}
+              <div className="mx-auto w-full max-w-4xl px-4 pb-4 md:px-6">
+                {isInteractiveActive && (
+                  <a
+                    href={`/code/${workspaceState?.id}`}
+                    className="flex items-center justify-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 mb-2 text-sm font-medium text-primary hover:bg-primary/10 transition-colors"
+                  >
+                    <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                    Click here to access Interactive Mode
+                  </a>
+                )}
+                {workspaceState && (
+                  <div className="rounded-t-xl border border-b-0 border-border px-3 py-2.5">
+                    <WorkspaceBar
+                      repo={repo}
+                      branch={branch}
+                      onBranchChange={handleBranchChange}
+                      getBranches={fetchBranches}
+                      workspace={workspaceState}
+                      diffStats={diffStats}
+                      onDiffStatsRefresh={handleDiffStatsRefresh}
+                      onShowDiff={() => setShowDiff(true)}
+                    />
+                  </div>
+                )}
+                <ChatInput
+                  bare
+                  input={input}
+                  setInput={setInput}
+                  onSubmit={handleSend}
+                  status={status}
+                  stop={stop}
+                  files={files}
+                  setFiles={setFiles}
+                  disabled={isInteractiveActive}
+                  placeholder={isInteractiveActive ? 'Interactive mode is active.' : 'Send a message...'}
+                  className={workspaceState ? "rounded-t-none" : undefined}
+                  codeMode={codeMode}
+                  codeModeSettings={codeModeSettings}
+                />
+              </div>
+            </>
           )}
-        </>
+        </div>
       )}
     </div>
   );

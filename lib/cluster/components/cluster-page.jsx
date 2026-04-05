@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { PageLayout } from '../../chat/components/page-layout.js';
@@ -28,8 +28,7 @@ export function ClusterPage({ session, clusterId, roleId }) {
   const nameRef = useRef(null);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor)
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
   const updateUrl = (tab) => {
@@ -318,7 +317,7 @@ export function ClusterPage({ session, clusterId, roleId }) {
       )}
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b border-border mb-6 overflow-x-auto">
+      <div className="flex gap-1 border-b border-border mb-6 overflow-x-auto scrollbar-hide max-w-full">
         <button
           onClick={() => switchTab('general')}
           className={`inline-flex items-center gap-2 px-3 py-2 min-h-[44px] shrink-0 text-sm font-medium border-b-2 transition-colors ${
@@ -456,6 +455,7 @@ function RoleTabContent({ role, clusterId, status, onUpdate, onDelete }) {
   const [foldersValue, setFoldersValue] = useState(role.folders ? role.folders.join(', ') : '');
   const [maxConcurrency, setMaxConcurrency] = useState(role.maxConcurrency || 1);
   const [cleanupWorkerDir, setCleanupWorkerDir] = useState(!!role.cleanupWorkerDir);
+  const [planMode, setPlanMode] = useState(!!role.planMode);
   const nameRef = useRef(null);
 
   const tc = role.triggerConfig || {};
@@ -464,6 +464,7 @@ function RoleTabContent({ role, clusterId, status, onUpdate, onDelete }) {
 
   const [cronValue, setCronValue] = useState(tc.cron?.schedule || '');
   const [fileWatchValue, setFileWatchValue] = useState(tc.file_watch?.paths || '');
+  const [fileWatchDebounce, setFileWatchDebounce] = useState(tc.file_watch?.debounce ?? 1000);
 
   const runningCount = status?.running || 0;
   const isRunning = runningCount > 0;
@@ -476,9 +477,11 @@ function RoleTabContent({ role, clusterId, status, onUpdate, onDelete }) {
     setFoldersValue(role.folders ? role.folders.join(', ') : '');
     setMaxConcurrency(role.maxConcurrency || 1);
     setCleanupWorkerDir(!!role.cleanupWorkerDir);
+    setPlanMode(!!role.planMode);
     const tc = role.triggerConfig || {};
     setCronValue(tc.cron?.schedule || '');
     setFileWatchValue(tc.file_watch?.paths || '');
+    setFileWatchDebounce(tc.file_watch?.debounce ?? 1000);
     setEditingName(false);
     setConfirmDelete(false);
   }, [role.id]);
@@ -531,7 +534,8 @@ function RoleTabContent({ role, clusterId, status, onUpdate, onDelete }) {
         onUpdate(role.id, { triggerConfig: buildConfig({ file_watch: { enabled: false } }) });
       } else {
         const paths = fileWatchValue || '';
-        onUpdate(role.id, { triggerConfig: buildConfig({ file_watch: { enabled: true, paths } }) });
+        const debounce = fileWatchDebounce ?? 1000;
+        onUpdate(role.id, { triggerConfig: buildConfig({ file_watch: { enabled: true, paths, debounce } }) });
       }
     }
   };
@@ -545,8 +549,17 @@ function RoleTabContent({ role, clusterId, status, onUpdate, onDelete }) {
 
   const saveFileWatch = () => {
     const trimmed = fileWatchValue.trim();
-    if (hasFileWatch && trimmed !== (tc.file_watch?.paths || '')) {
-      onUpdate(role.id, { triggerConfig: buildConfig({ file_watch: { enabled: true, paths: trimmed } }) });
+    const debounce = fileWatchDebounce ?? 1000;
+    if (hasFileWatch && (trimmed !== (tc.file_watch?.paths || '') || debounce !== (tc.file_watch?.debounce ?? 1000))) {
+      onUpdate(role.id, { triggerConfig: buildConfig({ file_watch: { enabled: true, paths: trimmed, debounce } }) });
+    }
+  };
+
+  const saveFileWatchDebounce = () => {
+    const debounce = fileWatchDebounce ?? 1000;
+    if (hasFileWatch && debounce !== (tc.file_watch?.debounce ?? 1000)) {
+      const paths = fileWatchValue.trim();
+      onUpdate(role.id, { triggerConfig: buildConfig({ file_watch: { enabled: true, paths, debounce } }) });
     }
   };
 
@@ -570,6 +583,12 @@ function RoleTabContent({ role, clusterId, status, onUpdate, onDelete }) {
     const next = !cleanupWorkerDir;
     setCleanupWorkerDir(next);
     onUpdate(role.id, { cleanupWorkerDir: next ? 1 : 0 });
+  };
+
+  const togglePlanMode = () => {
+    const next = !planMode;
+    setPlanMode(next);
+    onUpdate(role.id, { planMode: next ? 1 : 0 });
   };
 
   const handleRun = async () => {
@@ -747,6 +766,35 @@ function RoleTabContent({ role, clusterId, status, onUpdate, onDelete }) {
         </button>
       </div>
 
+      {/* Plan Mode */}
+      <div className="mb-6">
+        <label className="text-sm font-medium block mb-1">Plan Mode</label>
+        <button
+          type="button"
+          onClick={togglePlanMode}
+          className="inline-flex items-center gap-2 group"
+          role="switch"
+          aria-checked={planMode}
+          aria-label="Use plan permission mode instead of dangerously-skip-permissions"
+        >
+          <span
+            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${
+              planMode ? 'bg-primary' : 'bg-muted-foreground/30'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                planMode ? 'translate-x-4' : ''
+              }`}
+            />
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {planMode ? 'On' : 'Off'}
+          </span>
+        </button>
+        <p className="text-xs text-muted-foreground mt-1">Use --permission-mode plan instead of --dangerously-skip-permissions</p>
+      </div>
+
       <div className="border-b border-border mb-6" />
 
       {/* Folders */}
@@ -830,6 +878,19 @@ function RoleTabContent({ role, clusterId, status, onUpdate, onDelete }) {
               className="text-sm bg-background border border-input rounded-md px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-ring font-mono"
             />
             <p className="text-xs text-muted-foreground mt-1.5">Comma-separated paths relative to cluster data dir.</p>
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5 mt-3">Debounce (ms)</label>
+            <input
+              type="number"
+              min={100}
+              step={100}
+              value={fileWatchDebounce}
+              onChange={(e) => setFileWatchDebounce(parseInt(e.target.value) || 1000)}
+              onBlur={saveFileWatchDebounce}
+              onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+              placeholder="1000"
+              className="text-sm bg-background border border-input rounded-md px-3 py-2 w-24 focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+            />
+            <p className="text-xs text-muted-foreground mt-1.5">Wait time after last file change before triggering.</p>
           </div>
         )}
       </div>
@@ -890,13 +951,13 @@ function CopyButton({ text, label }) {
 }
 
 const PLACEHOLDER_ROWS = [
-  { name: '{{CLUSTER_HOME}}', example: '/home/claude-code/workspace', desc: 'Root of the cluster workspace' },
-  { name: '{{CLUSTER_SHARED_DIR}}', example: '/home/claude-code/workspace/shared/', desc: 'Cluster shared directory' },
+  { name: '{{CLUSTER_HOME}}', example: '/home/coding-agent/workspace', desc: 'Root of the cluster workspace' },
+  { name: '{{CLUSTER_SHARED_DIR}}', example: '/home/coding-agent/workspace/shared/', desc: 'Cluster shared directory' },
   { name: '{{CLUSTER_SHARED_FOLDERS}}', example: '[".../shared/inbox/",".../shared/outbox/"]', desc: 'Cluster shared folders as absolute paths (JSON)' },
   { name: '{{SELF_ROLE_NAME}}', example: 'Tech Lead', desc: "Current role's name" },
   { name: '{{SELF_WORKER_ID}}', example: 'a1b2c3d4', desc: "This worker's unique ID" },
-  { name: '{{SELF_WORK_DIR}}', example: '/home/claude-code/workspace/role-db4d21c0/worker-a1b2c3d4/', desc: "Worker's private dir (where claude starts)" },
-  { name: '{{SELF_TMP_DIR}}', example: '/home/claude-code/workspace/role-db4d21c0/worker-a1b2c3d4/tmp/', desc: 'Scratch space' },
+  { name: '{{SELF_WORK_DIR}}', example: '/home/coding-agent/workspace/role-db4d21c0/worker-a1b2c3d4/', desc: "Worker's private dir (where claude starts)" },
+  { name: '{{SELF_TMP_DIR}}', example: '/home/coding-agent/workspace/role-db4d21c0/worker-a1b2c3d4/tmp/', desc: 'Scratch space' },
   { name: '{{DATETIME}}', example: '2026-03-07T20:00:01Z', desc: 'Current UTC timestamp' },
   { name: '{{WORKSPACE}}', example: '(full JSON manifest)', desc: 'Entire workspace manifest as JSON' },
   { name: '{{WEBHOOK_PAYLOAD}}', example: '{"issue_number": 42, ...}', desc: 'Webhook payload as formatted JSON (empty string if no payload)' },
@@ -904,15 +965,15 @@ const PLACEHOLDER_ROWS = [
 
 const WORKSPACE_EXAMPLE = `{
   "CLUSTER": {
-    "CLUSTER_HOME": "/home/claude-code/workspace",
-    "CLUSTER_SHARED_DIR": "/home/claude-code/workspace/shared/",
-    "CLUSTER_SHARED_FOLDERS": ["/home/claude-code/workspace/shared/inbox/", "/home/claude-code/workspace/shared/outbox/", "/home/claude-code/workspace/shared/testing/"]
+    "CLUSTER_HOME": "/home/coding-agent/workspace",
+    "CLUSTER_SHARED_DIR": "/home/coding-agent/workspace/shared/",
+    "CLUSTER_SHARED_FOLDERS": ["/home/coding-agent/workspace/shared/inbox/", "/home/coding-agent/workspace/shared/outbox/", "/home/coding-agent/workspace/shared/testing/"]
   },
   "SELF": {
     "SELF_ROLE_NAME": "Tech Lead",
     "SELF_WORKER_ID": "a1b2c3d4",
-    "SELF_WORK_DIR": "/home/claude-code/workspace/role-db4d21c0/worker-a1b2c3d4/",
-    "SELF_TMP_DIR": "/home/claude-code/workspace/role-db4d21c0/worker-a1b2c3d4/tmp/"
+    "SELF_WORK_DIR": "/home/coding-agent/workspace/role-db4d21c0/worker-a1b2c3d4/",
+    "SELF_TMP_DIR": "/home/coding-agent/workspace/role-db4d21c0/worker-a1b2c3d4/tmp/"
   }
 }`;
 

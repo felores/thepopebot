@@ -1,33 +1,28 @@
 /**
  * sync.js — Mirrors package templates into a user project and rebuilds.
  *
- * mirrorTemplates() has three phases:
+ * mirrorTemplates() uses the same scaffolding logic as `init` (cli.js):
  *
- *   1. COPY: Walk templates/ recursively, copy every file to projectPath.
+ *   1. COPY: Walk templates/ recursively:
+ *      - New files → created
+ *      - Identical files → skipped
+ *      - Managed files that differ → backed up + overwritten
+ *      - Non-managed files that differ → skipped (reported as available)
  *      - .template suffix is stripped from destination filenames
- *      - Symlinks are recreated as symlinks
  *      - Files named CLAUDE.md are excluded (EXCLUDED_FILENAMES)
- *      - SKIP_PATHS (skills/active, cron, triggers) are skipped entirely —
- *        the directory is never entered, nothing is copied
- *      - All copied paths are tracked in copiedPaths
  *
- *   2. DELETE STALE: For each top-level directory in templates/ that also
- *      exists in the project, walk the PROJECT directory and delete any file
- *      that was NOT copied (not in copiedPaths) AND does not exist in
- *      templates (even as a .template variant).
- *      - SKIP_PATHS are skipped — files inside these dirs are never deleted
- *      - Only directories that templates touches are walked, so user-only
- *        dirs (.env, data/, etc.) are never entered
+ *   2. DELETE STALE: Only walks managed DIRECTORIES (from managed-paths.js).
+ *      Files in managed dirs with no corresponding template are backed up
+ *      and deleted.
  *
- *   3. REMOVE EMPTY DIRS: For each top-level directory in templates/ that
- *      also exists in the project, recursively remove any empty directories.
- *      - BUG: Does NOT check SKIP_PATHS — will delete cron/, triggers/,
- *        or skills/active/ if they are empty directories
+ *   3. REMOVE EMPTY DIRS: Only within managed directories.
+ *
+ *   All deleted/overwritten files are backed up to .backups/{timestamp}/.
  *
  * sync() orchestrates the full pipeline:
  *   1. Build package JSX (npm run build)
  *   2. npm pack → copy tarball to project
- *   3. mirrorTemplates() — overwrite + delete stale
+ *   3. mirrorTemplates() — scaffold using init's managed-path logic
  *   4. npm install tarball on host (--no-save)
  *   5. Docker image build (patches Dockerfile for local tarball, includes Next.js build)
  *   6. docker compose up -d -V event-handler
@@ -37,13 +32,14 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { MANAGED_PATHS, isManaged } from './managed-paths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PACKAGE_DIR = path.join(__dirname, '..');
 
+// Files that must never be scaffolded directly (use .template suffix instead).
 const EXCLUDED_FILENAMES = ['CLAUDE.md'];
-const SKIP_PATHS = ['skills/active', 'cron', 'triggers'];
 
 function destPath(templateRelPath) {
   if (templateRelPath.endsWith('.template')) {
@@ -60,22 +56,82 @@ function templatePath(userPath, templatesDir) {
   return userPath;
 }
 
-function isSkipped(relPath) {
-  return SKIP_PATHS.some(p => relPath === p || relPath.startsWith(p + '/'));
-}
-
-function mirrorTemplates(projectPath) {
-  const templatesDir = path.join(PACKAGE_DIR, 'templates');
-  const copiedPaths = new Set();
-
-  // 1. Copy all template files, overwriting everything (skip skills/active)
+/**
+ * Collect all template files as relative paths (skips symlinks).
+ */
+function getTemplateFiles(templatesDir) {
+  const files = [];
   function walk(dir) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
-      const relPath = path.relative(templatesDir, fullPath);
-      if (isSkipped(relPath)) continue;
+      if (entry.isSymbolicLink()) {
+        // Symlinks handled separately (skill activation, .claude/skills, .pi/skills)
+        continue;
+      } else if (entry.isDirectory()) {
+        walk(fullPath);
+      } else if (!EXCLUDED_FILENAMES.includes(entry.name)) {
+        files.push(path.relative(templatesDir, fullPath));
+      }
+    }
+  }
+  walk(templatesDir);
+  return files;
+}
 
+/**
+ * Mirror templates into a project using the same scaffolding logic as `init`.
+ *
+ * Copy phase:
+ *   - New files → created
+ *   - Identical files → skipped
+ *   - Managed files that differ → backed up + overwritten
+ *   - Non-managed files that differ → skipped
+ *
+ * Delete phase (managed directories only):
+ *   - Stale files in managed dirs with no corresponding template → backed up + deleted
+ *   - Empty directories within managed dirs → removed
+ */
+function mirrorTemplates(projectPath) {
+  const templatesDir = path.join(PACKAGE_DIR, 'templates');
+  const templateFiles = getTemplateFiles(templatesDir);
+
+  const created = [];
+  const skipped = [];
+  const changed = [];
+  const updated = [];
+  const backedUp = [];
+
+  let backupDir = null;
+  function getBackupDir() {
+    if (!backupDir) {
+      const now = new Date();
+      const ts = now.getFullYear().toString()
+        + String(now.getMonth() + 1).padStart(2, '0')
+        + String(now.getDate()).padStart(2, '0')
+        + '-'
+        + String(now.getHours()).padStart(2, '0')
+        + String(now.getMinutes()).padStart(2, '0')
+        + String(now.getSeconds()).padStart(2, '0');
+      backupDir = path.join(projectPath, '.backups', ts);
+    }
+    return backupDir;
+  }
+
+  function backupFile(filePath, relPath) {
+    const bd = getBackupDir();
+    const dest = path.join(bd, relPath);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(filePath, dest);
+    backedUp.push(relPath);
+  }
+
+  // 1a. Recreate symlinks from templates
+  function walkSymlinks(dir) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      const relPath = path.relative(templatesDir, fullPath);
       if (entry.isSymbolicLink()) {
         const outPath = destPath(relPath);
         const dest = path.join(projectPath, outPath);
@@ -83,73 +139,111 @@ function mirrorTemplates(projectPath) {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         try { fs.unlinkSync(dest); } catch {}
         fs.symlinkSync(target, dest);
-        copiedPaths.add(outPath);
         console.log(`    ${outPath} -> ${target}`);
       } else if (entry.isDirectory()) {
-        walk(fullPath);
-      } else if (!EXCLUDED_FILENAMES.includes(entry.name)) {
-        const outPath = destPath(relPath);
-        const dest = path.join(projectPath, outPath);
+        walkSymlinks(fullPath);
+      }
+    }
+  }
+  walkSymlinks(templatesDir);
+
+  // 1b. Copy template files using init's managed/non-managed logic
+  for (const relPath of templateFiles) {
+    const src = path.join(templatesDir, relPath);
+    const outPath = destPath(relPath);
+    const dest = path.join(projectPath, outPath);
+
+    if (!fs.existsSync(dest)) {
+      // File doesn't exist — create it
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(src, dest);
+      created.push(outPath);
+      console.log(`    Created ${outPath}`);
+    } else {
+      // File exists — check if template has changed
+      const srcContent = fs.readFileSync(src);
+      const destContent = fs.readFileSync(dest);
+      if (srcContent.equals(destContent)) {
+        skipped.push(outPath);
+      } else if (isManaged(outPath)) {
+        // Managed file differs — back up before overwriting
+        backupFile(dest, outPath);
         fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.copyFileSync(fullPath, dest);
-        copiedPaths.add(outPath);
-        console.log(`    ${outPath}`);
-      }
-    }
-  }
-  walk(templatesDir);
-
-  // 2. Delete files in project that don't exist in templates (skip skills/active)
-  function walkProject(dir) {
-    if (!fs.existsSync(dir)) return;
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      const relPath = path.relative(projectPath, fullPath);
-      if (isSkipped(relPath)) continue;
-
-      if (entry.isSymbolicLink()) {
-        const tmplPath = templatePath(relPath, templatesDir);
-        if (!copiedPaths.has(relPath) && !fs.existsSync(path.join(templatesDir, tmplPath))) {
-          fs.unlinkSync(fullPath);
-          console.log(`    Deleted ${relPath} (stale)`);
-        }
-      } else if (entry.isDirectory()) {
-        walkProject(fullPath);
+        fs.copyFileSync(src, dest);
+        updated.push(outPath);
+        console.log(`    Updated ${outPath}`);
       } else {
-        const tmplPath = templatePath(relPath, templatesDir);
-        if (!copiedPaths.has(relPath) && !fs.existsSync(path.join(templatesDir, tmplPath))) {
-          fs.unlinkSync(fullPath);
-          console.log(`    Deleted ${relPath} (stale)`);
-        }
+        changed.push(outPath);
+        console.log(`    Skipped ${outPath} (already exists)`);
       }
     }
   }
 
-  // Walk only directories that templates touches (don't delete user's .env, data/, etc.)
-  for (const entry of fs.readdirSync(templatesDir, { withFileTypes: true })) {
-    const dest = path.join(projectPath, entry.name);
-    if (entry.isDirectory() && fs.existsSync(dest)) {
-      walkProject(dest);
+  // 2. Delete stale files in managed directories that no longer exist in templates
+  const deleted = [];
+  const managedDirs = MANAGED_PATHS.filter(p => p.endsWith('/'));
+  for (const managedDir of managedDirs) {
+    const userDir = path.join(projectPath, managedDir);
+    if (!fs.existsSync(userDir)) continue;
+
+    // Walk the user's managed directory
+    function walkUser(dir) {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walkUser(fullPath);
+        } else {
+          const relPath = path.relative(projectPath, fullPath);
+          // Check if a corresponding template exists
+          const tmplPath = templatePath(relPath, templatesDir);
+          const templateExists = fs.existsSync(path.join(templatesDir, tmplPath));
+          if (!templateExists) {
+            backupFile(fullPath, relPath);
+            fs.unlinkSync(fullPath);
+            deleted.push(relPath);
+            console.log(`    Deleted ${relPath} (stale managed file)`);
+          }
+        }
+      }
+    }
+    walkUser(userDir);
+
+    // Remove empty directories left behind (within managed dirs only)
+    function removeEmptyDirs(dir) {
+      if (!fs.existsSync(dir)) return;
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          removeEmptyDirs(path.join(dir, entry.name));
+        }
+      }
+      // Re-read after potential child removals
+      if (fs.readdirSync(dir).length === 0) {
+        fs.rmdirSync(dir);
+      }
+    }
+    removeEmptyDirs(userDir);
+  }
+
+  // Report backed-up files
+  if (backedUp.length > 0) {
+    console.log(`\n    Backed up ${backedUp.length} file(s) to ${path.relative(projectPath, backupDir)}/`);
+  }
+
+  // Report updated managed files
+  if (updated.length > 0) {
+    console.log('\n    Updated managed files:');
+    for (const file of updated) {
+      console.log(`      ${file}`);
     }
   }
 
-  // Remove empty directories left behind
-  function removeEmptyDirs(dir) {
-    if (!fs.existsSync(dir)) return;
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) removeEmptyDirs(path.join(dir, entry.name));
-    }
-    if (fs.readdirSync(dir).length === 0) {
-      console.log(`    Deleted ${dir} (empty)`);
-      fs.rmdirSync(dir);
-    }
-  }
-  for (const entry of fs.readdirSync(templatesDir, { withFileTypes: true })) {
-    const dest = path.join(projectPath, entry.name);
-    if (entry.isDirectory() && fs.existsSync(dest)) {
-      removeEmptyDirs(dest);
+  // Report changed templates
+  if (changed.length > 0) {
+    console.log('\n    Updated templates available (skipped — user-edited):');
+    for (const file of changed) {
+      console.log(`      ${file}`);
     }
   }
 }
@@ -183,8 +277,7 @@ function buildDockerImage(projectPath) {
   fs.cpSync(webSrc, webDest, { recursive: true });
 
   try {
-    // Build using stdin Dockerfile with project dir as context (no cache to ensure fresh package)
-    execSync(`docker build --no-cache -f - -t ${imageTag} .`, {
+    execSync(`docker build -f - -t ${imageTag} .`, {
       input: dockerfile,
       stdio: ['pipe', 'inherit', 'inherit'],
       cwd: projectPath,
@@ -192,6 +285,12 @@ function buildDockerImage(projectPath) {
   } finally {
     fs.rmSync(webDest, { recursive: true, force: true });
   }
+
+  // Clean up dangling images from previous builds
+  try {
+    execSync('docker image prune -f', { stdio: 'ignore' });
+  } catch {}
+
 
   // Update THEPOPEBOT_VERSION in .env
   const envPath = path.join(projectPath, '.env');
@@ -205,6 +304,90 @@ function buildDockerImage(projectPath) {
     fs.writeFileSync(envPath, env);
     console.log(`  Updated THEPOPEBOT_VERSION to ${version}`);
   }
+}
+
+/**
+ * Fast sync — skip Docker image rebuild entirely.
+ *
+ *   1. Build package JSX (npm run build)
+ *   2. mirrorTemplates() — scaffold using init's managed-path logic
+ *   3. docker cp package source (lib/, api/, config/, package.json) into
+ *      the running container's /app/node_modules/thepopebot/
+ *   4. docker cp web/app/ + web/postcss.config.mjs into container
+ *   5. docker exec next build inside the container (tailwindcss already there)
+ *   6. Clean up copied source from container
+ *   7. docker exec pm2 restart all
+ */
+export async function syncFast(projectPath) {
+  if (!projectPath) {
+    console.error('\n  Usage: thepopebot sync --fast <path-to-project>\n');
+    process.exit(1);
+  }
+
+  projectPath = path.resolve(projectPath);
+
+  if (!fs.existsSync(path.join(projectPath, 'package.json'))) {
+    console.error(`\n  Not a project directory (no package.json): ${projectPath}\n`);
+    process.exit(1);
+  }
+
+  // 1. Build JSX
+  console.log('\n  Building package...');
+  execSync('npm run build', { stdio: 'inherit', cwd: PACKAGE_DIR });
+
+  // 2. Mirror templates
+  console.log('\n  Mirroring templates...');
+  mirrorTemplates(projectPath);
+
+  // 3. Get running container ID
+  const container = execSync('docker compose ps -q event-handler', {
+    encoding: 'utf8',
+    cwd: projectPath,
+  }).trim();
+
+  if (!container) {
+    console.error('\n  event-handler container is not running. Use full sync instead.\n');
+    process.exit(1);
+  }
+
+  // 4. Copy package source into container's node_modules/thepopebot/
+  const PKG_DEST = '/app/node_modules/thepopebot';
+  const PACKAGE_DIRS = ['lib', 'api', 'config'];
+
+  console.log('\n  Copying package source into container...');
+  for (const dir of PACKAGE_DIRS) {
+    execSync(`docker exec ${container} rm -rf ${PKG_DEST}/${dir}`, { stdio: 'inherit' });
+    execSync(`docker cp ${path.join(PACKAGE_DIR, dir)} ${container}:${PKG_DEST}/${dir}`, { stdio: 'inherit' });
+  }
+  // Also copy package.json for exports resolution
+  execSync(`docker cp ${path.join(PACKAGE_DIR, 'package.json')} ${container}:${PKG_DEST}/package.json`, { stdio: 'inherit' });
+
+  // 5. Copy web/app/ source into container for next build
+  const webDir = path.join(PACKAGE_DIR, 'web');
+  console.log('\n  Copying web source into container...');
+  execSync(`docker cp ${path.join(webDir, 'app')} ${container}:/app/app`, { stdio: 'inherit' });
+  execSync(`docker cp ${path.join(webDir, 'postcss.config.mjs')} ${container}:/app/postcss.config.mjs`, { stdio: 'inherit' });
+  execSync(`docker cp ${path.join(webDir, 'next.config.mjs')} ${container}:/app/next.config.mjs`, { stdio: 'inherit' });
+
+  // 6. Run next build inside the container
+  // Hide data/logs dirs so webpack's FileSystemInfo doesn't crawl them (causes OOM/RangeError
+  // when workspaces contain thousands of files). Restored immediately after build.
+  console.log('\n  Building Next.js inside container...');
+  execSync(`docker exec ${container} sh -c 'mv /app/data /app/.data-build-tmp 2>/dev/null; mv /app/logs /app/.logs-build-tmp 2>/dev/null; true'`, { stdio: 'inherit' });
+  try {
+    execSync(`docker exec ${container} ./node_modules/.bin/next build`, { stdio: 'inherit' });
+  } finally {
+    execSync(`docker exec ${container} sh -c 'mv /app/.data-build-tmp /app/data 2>/dev/null; mv /app/.logs-build-tmp /app/logs 2>/dev/null; true'`, { stdio: 'inherit' });
+  }
+
+  // 7. Clean up web source from container (not needed at runtime)
+  execSync(`docker exec ${container} rm -rf /app/app`, { stdio: 'inherit' });
+
+  // 8. Restart PM2
+  console.log('\n  Restarting server...');
+  execSync(`docker exec ${container} pm2 restart all`, { stdio: 'inherit' });
+
+  console.log('\n  Fast synced!\n');
 }
 
 export async function sync(projectPath) {

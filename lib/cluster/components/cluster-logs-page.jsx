@@ -6,41 +6,8 @@ import { SidebarProvider, SidebarInset } from '../../chat/components/ui/sidebar.
 import { ChatNavProvider } from '../../chat/components/chat-nav-context.js';
 import { ClusterIcon } from '../../chat/components/icons.js';
 import { getCluster, getClusterLogs, getSessionLog } from '../actions.js';
-import { CodeLogView } from './code-log-view.jsx';
-
-function mapLine(line) {
-  let parsed;
-  try {
-    parsed = JSON.parse(line);
-  } catch {
-    return [{ type: 'text', text: `\n${line}\n` }];
-  }
-  const events = [];
-  const { type, message, result, tool_use_result } = parsed;
-  if (type === 'assistant' && message?.content) {
-    for (const block of message.content) {
-      if (block.type === 'text' && block.text) {
-        events.push({ type: 'text', text: block.text });
-      } else if (block.type === 'tool_use') {
-        events.push({ type: 'tool-call', toolCallId: block.id, toolName: block.name, args: block.input });
-      }
-    }
-  } else if (type === 'user' && message?.content) {
-    for (const block of message.content) {
-      if (block.type === 'tool_result') {
-        const resultText = tool_use_result?.stdout ?? (
-          typeof block.content === 'string' ? block.content :
-          Array.isArray(block.content) ? block.content.map(b => b.text || '').join('') :
-          JSON.stringify(block.content)
-        );
-        events.push({ type: 'tool-result', toolCallId: block.tool_use_id, result: resultText });
-      }
-    }
-  } else if (type === 'result' && result) {
-    events.push({ type: 'text', text: result, _resultSummary: result });
-  }
-  return events;
-}
+import { mapLine } from '../../ai/line-mappers.js';
+import { CodeLogView } from '../../chat/components/code-log-view.js';
 
 function formatDuration(startedAt, endedAt) {
   if (!startedAt || !endedAt) return null;
@@ -162,14 +129,14 @@ export function ClusterLogsPage({ session, clusterId }) {
             {/* Body */}
             <div className="flex flex-col md:flex-row flex-1 min-h-0">
               {/* Left: role list */}
-              <div className="shrink-0 border-b md:border-b-0 md:border-r border-border overflow-x-auto md:overflow-y-auto md:w-56 bg-muted/30">
+              <div className="shrink-0 border-b md:border-b-0 md:border-r border-border overflow-x-auto scrollbar-hide md:overflow-y-auto md:w-56 bg-muted/30">
                 <div className="hidden md:block px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   Roles
                 </div>
                 {logData.length === 0 ? (
                   <div className="px-3 py-4 text-xs text-muted-foreground">No logs yet</div>
                 ) : (
-                  <div className="flex md:block overflow-x-auto md:overflow-x-visible gap-2 px-3 py-2 md:p-0">
+                  <div className="flex md:block overflow-x-auto scrollbar-hide md:overflow-x-visible gap-2 px-3 py-2 md:p-0">
                     {logData.map((role) => (
                       <button
                         key={role.roleShortId}
@@ -231,7 +198,7 @@ export function ClusterLogsPage({ session, clusterId }) {
                                   <span>{duration}</span>
                                 )}
                                 {s.startedAt && !s.endedAt && (
-                                  <span className="text-yellow-600 dark:text-yellow-400">in progress</span>
+                                  <span className="text-yellow-500">in progress</span>
                                 )}
                               </div>
                             </div>
@@ -241,7 +208,7 @@ export function ClusterLogsPage({ session, clusterId }) {
                           {expanded && (
                             <div className="border-t border-border">
                               {/* Tabs */}
-                              <div className="flex items-center gap-0 border-b border-border bg-muted/30">
+                              <div className="flex items-center gap-0 border-b border-border bg-muted/30 overflow-x-auto scrollbar-hide max-w-full">
                                 {[
                                   { id: 'code', label: 'Code' },
                                   { id: 'console', label: 'Console' },
@@ -252,7 +219,7 @@ export function ClusterLogsPage({ session, clusterId }) {
                                   <button
                                     key={t.id}
                                     onClick={() => setTab(key, t.id)}
-                                    className={`px-4 py-2 text-xs font-medium transition-colors border-b-2 ${
+                                    className={`px-4 py-2 text-xs font-medium transition-colors border-b-2 shrink-0 whitespace-nowrap ${
                                       tab === t.id
                                         ? 'border-b-foreground text-foreground'
                                         : 'border-b-transparent text-muted-foreground hover:text-foreground'

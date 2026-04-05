@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { CirclePlusIcon, PanelLeftIcon, MessageIcon, ClusterIcon, BellIcon, RunnersIcon, ArrowUpCircleIcon, LifeBuoyIcon, GitPullRequestIcon } from './icons.js';
-import { getUnreadNotificationCount, getPullRequestCount, getAppVersion } from '../actions.js';
+import { CirclePlusIcon, PanelLeftIcon, MessageIcon, ClusterIcon, BellIcon, ContainerIcon, ArrowUpCircleIcon, LifeBuoyIcon, GitPullRequestIcon } from './icons.js';
 import { SidebarHistory } from './sidebar-history.js';
 import { SidebarUserNav } from './sidebar-user-nav.js';
 import { UpgradeDialog } from './upgrade-dialog.js';
@@ -18,10 +17,8 @@ import {
 } from './ui/sidebar.js';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip.js';
 import { useChatNav } from './chat-nav-context.js';
-import { useFeatures } from './features-context.js';
 
 export function AppSidebar({ user }) {
-  const features = useFeatures();
   const { navigateToChat } = useChatNav();
   const { state, open, setOpenMobile, toggleSidebar } = useSidebar();
   const collapsed = state === 'collapsed';
@@ -35,11 +32,12 @@ export function AppSidebar({ user }) {
   // Fetch badge counts (notifications + PRs) — run immediately, then every 10 minutes
   useEffect(() => {
     function fetchCounts() {
-      getUnreadNotificationCount()
-        .then((count) => setUnreadCount(count))
-        .catch(() => {});
-      getPullRequestCount()
-        .then((count) => setPrCount(count))
+      fetch('/chats/counts')
+        .then(r => r.json())
+        .then(({ notifications, pullRequests }) => {
+          setUnreadCount(notifications || 0);
+          setPrCount(pullRequests || 0);
+        })
         .catch(() => {});
     }
     fetchCounts();
@@ -49,7 +47,8 @@ export function AppSidebar({ user }) {
 
   // Version check — one-time on mount
   useEffect(() => {
-    getAppVersion()
+    fetch('/admin/app-version')
+      .then(r => r.json())
       .then(({ version, updateAvailable, changelog }) => {
         setVersion(version);
         setUpdateAvailable(updateAvailable);
@@ -124,7 +123,6 @@ export function AppSidebar({ user }) {
             </SidebarMenuItem>
 
             {/* Clusters */}
-            {features?.clusterWorkspace && (
             <SidebarMenuItem>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -141,22 +139,21 @@ export function AppSidebar({ user }) {
                 )}
               </Tooltip>
             </SidebarMenuItem>
-            )}
 
-            {/* Runners */}
+            {/* Containers */}
             <SidebarMenuItem>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <SidebarMenuButton
-                    href="/runners"
+                    href="/containers"
                     className={collapsed ? 'justify-center' : ''}
                   >
-                    <RunnersIcon size={16} />
-                    {!collapsed && <span>Runners</span>}
+                    <ContainerIcon size={16} />
+                    {!collapsed && <span>Containers</span>}
                   </SidebarMenuButton>
                 </TooltipTrigger>
                 {collapsed && (
-                  <TooltipContent side="right">Runners</TooltipContent>
+                  <TooltipContent side="right">Containers</TooltipContent>
                 )}
               </Tooltip>
             </SidebarMenuItem>

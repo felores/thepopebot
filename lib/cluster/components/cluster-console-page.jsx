@@ -6,7 +6,7 @@ import { SidebarProvider, SidebarInset } from '../../chat/components/ui/sidebar.
 import { ChatNavProvider } from '../../chat/components/chat-nav-context.js';
 import { PencilIcon, ClusterIcon } from '../../chat/components/icons.js';
 import { triggerRoleManually, stopRoleAction, getCluster, getWorkerPrompts } from '../actions.js';
-import { CodeLogView } from './code-log-view.jsx';
+import { CodeLogView } from '../../chat/components/code-log-view.js';
 import { ConfirmDialog } from '../../chat/components/ui/confirm-dialog.js';
 
 const MAX_LOG_ENTRIES = 500;
@@ -293,7 +293,7 @@ function RoleHeaderButton({ roleId, roleName, running, max, clusterId }) {
         disabled={triggering}
         className={`inline-flex items-center rounded-full px-3 py-1 text-xs transition-colors disabled:opacity-40 ${
           running > 0
-            ? 'bg-green-500/20 text-green-600 dark:text-green-400 hover:bg-green-500/30'
+            ? 'bg-green-500/20 text-green-500 hover:bg-green-500/30'
             : 'bg-muted/50 text-muted-foreground hover:bg-muted'
         }`}
       >
@@ -488,7 +488,7 @@ function StatsPanel({ containers }) {
                 </td>
                 <td className="text-right px-3 py-1">
                   {c.running
-                    ? <span className="text-green-600 dark:text-green-400">RUN</span>
+                    ? <span className="text-green-500">RUN</span>
                     : <span className="text-muted-foreground/60">STOP</span>}
                 </td>
               </tr>

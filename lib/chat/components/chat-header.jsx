@@ -5,8 +5,8 @@ import { SidebarTrigger } from './ui/sidebar.js';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from './ui/dropdown-menu.js';
 import { ConfirmDialog } from './ui/confirm-dialog.js';
 import { RenameDialog } from './ui/rename-dialog.jsx';
-import { ChevronDownIcon, StarIcon, StarFilledIcon, PencilIcon, TrashIcon } from './icons.js';
-import { getChatData, getChatDataByWorkspace, renameChat, deleteChat, starChat } from '../actions.js';
+import { ChevronDownIcon, StarIcon, StarFilledIcon, PencilIcon, TrashIcon, AgentIcon, CodeIcon } from './icons.js';
+import { renameChat, deleteChat, starChat } from '../actions.js';
 import { useChatNav } from './chat-nav-context.js';
 
 export function ChatHeader({ chatId: chatIdProp, workspaceId }) {
@@ -17,8 +17,10 @@ export function ChatHeader({ chatId: chatIdProp, workspaceId }) {
   const [editValue, setEditValue] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showRenameDialog, setShowRenameDialog] = useState(false);
+  const [chatMode, setChatMode] = useState(workspaceId ? 'code' : null);
   const inputRef = useRef(null);
   const nav = useChatNav();
+  const TitleIcon = chatMode === 'code' ? CodeIcon : AgentIcon;
 
   // The actual chatId to use for actions (either passed directly or resolved from workspace)
   const chatId = resolvedChatId;
@@ -28,23 +30,29 @@ export function ChatHeader({ chatId: chatIdProp, workspaceId }) {
 
   const fetchMeta = useCallback(() => {
     if (workspaceId) {
-      getChatDataByWorkspace(workspaceId)
+      fetch(`/code/${workspaceId}/chat-data`)
+        .then(r => r.json())
         .then((data) => {
           if (data?.title && data.title !== 'New Chat') {
             setTitle(data.title);
             setStarred(data.starred || 0);
             setResolvedChatId(data.chatId);
+            if (data.chatMode) setChatMode(data.chatMode);
+            document.title = data.title;
           }
         })
         .catch(() => {});
       return;
     }
     if (!chatIdProp) return;
-    getChatData(chatIdProp)
+    fetch(`/chat/${chatIdProp}/data`)
+      .then(r => r.json())
       .then((data) => {
         if (data?.title && data.title !== 'New Chat') {
           setTitle(data.title);
           setStarred(data.starred || 0);
+          if (data.chatMode) setChatMode(data.chatMode);
+          document.title = data.title;
         }
       })
       .catch(() => {});
@@ -55,6 +63,8 @@ export function ChatHeader({ chatId: chatIdProp, workspaceId }) {
     const titleHandler = (e) => {
       if (e.detail.chatId === chatId) {
         setTitle(e.detail.title);
+        if (e.detail.chatMode) setChatMode(e.detail.chatMode);
+        document.title = e.detail.title;
       }
     };
     const starHandler = (e) => {
@@ -67,6 +77,7 @@ export function ChatHeader({ chatId: chatIdProp, workspaceId }) {
     return () => {
       window.removeEventListener('chatTitleUpdated', titleHandler);
       window.removeEventListener('chatStarUpdated', starHandler);
+      document.title = 'ThePopeBot';
     };
   }, [fetchMeta, chatId]);
 
@@ -138,7 +149,12 @@ export function ChatHeader({ chatId: chatIdProp, workspaceId }) {
             className="text-base font-medium text-foreground bg-background rounded-md border border-ring px-2 py-0.5 outline-none ring-2 ring-ring/30 min-w-0 w-full"
           />
         ) : showControls ? (
-          <div className="group/title flex items-center gap-0.5 rounded-md px-1.5 py-0.5 hover:bg-muted transition-colors min-w-0">
+          <div className="group/title flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-muted transition-colors min-w-0">
+            {chatMode && (
+              <span className="text-muted-foreground shrink-0">
+                <TitleIcon size={16} />
+              </span>
+            )}
             <h1
               className="text-base font-medium text-muted-foreground truncate cursor-pointer"
               onClick={enterEditMode}
@@ -168,9 +184,16 @@ export function ChatHeader({ chatId: chatIdProp, workspaceId }) {
             </DropdownMenu>
           </div>
         ) : (
-          <h1 className="text-base font-medium text-muted-foreground truncate">
-            {title || '\u00A0'}
-          </h1>
+          <div className="flex items-center gap-1 min-w-0">
+            {title && chatMode && (
+              <span className="text-muted-foreground shrink-0">
+                <TitleIcon size={16} />
+              </span>
+            )}
+            <h1 className="text-base font-medium text-muted-foreground truncate">
+              {title || '\u00A0'}
+            </h1>
+          </div>
         )}
       </header>
 

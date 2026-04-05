@@ -48,6 +48,9 @@ jobs:
                 cd /project && npx --yes thepopebot@latest init --no-install
               fi
 
+              # Install the new version into node_modules so local CLI stays current
+              cd /project && npm install
+
               # Commit any template changes from init
               git -C /project add -A
               if ! git -C /project diff --cached --quiet; then
@@ -74,7 +77,9 @@ jobs:
         if: steps.pull.outputs.status == 'VERSION_CHANGED'
         run: |
           HOST_DIR=$(docker inspect thepopebot-event-handler --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')
-          docker compose --project-directory "$HOST_DIR" --env-file "$HOST_DIR/.env" pull event-handler
+          COMPOSE_FILE=$(grep "^COMPOSE_FILE=" /project/.env | cut -d= -f2- || true)
+          COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+          docker compose -f "/project/$COMPOSE_FILE" --project-directory "$HOST_DIR" --env-file /project/.env pull event-handler
           docker stop thepopebot-event-handler || true
           docker rm thepopebot-event-handler || true
-          docker compose --project-directory "$HOST_DIR" --env-file "$HOST_DIR/.env" up -d event-handler
+          docker compose -f "/project/$COMPOSE_FILE" --project-directory "$HOST_DIR" --env-file /project/.env up -d event-handler

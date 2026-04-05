@@ -45,4 +45,15 @@ export const PROVIDERS = {
       { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
     ],
   },
+  kimi: {
+    label: 'Kimi (Moonshot AI)',
+    name: 'Kimi',
+    envKey: 'MOONSHOT_API_KEY',
+    keyPage: 'https://platform.moonshot.ai/console/api-keys',
+    builtin: true,
+    models: [
+      { id: 'kimi-k2.5', name: 'Kimi K2.5', default: true },
+      { id: 'kimi-k2', name: 'Kimi K2' },
+    ],
+  },
 };

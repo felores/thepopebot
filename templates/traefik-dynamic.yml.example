@@ -1,7 +1,0 @@
-# Traefik dynamic config for Tailscale TLS
-# Copy this file to traefik-dynamic.yml and replace YOUR_HOSTNAME
-# with your full Tailscale machine name (e.g. mybot.taila1b2c3.ts.net)
-tls:
-  certificates:
-    - certFile: /certs/YOUR_HOSTNAME.crt
-      keyFile: /certs/YOUR_HOSTNAME.key

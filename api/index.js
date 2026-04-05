@@ -1,13 +1,18 @@
 import { createHash, timingSafeEqual } from 'crypto';
-import { createJob } from '../lib/tools/create-job.js';
+import { createAgentJob } from '../lib/tools/create-agent-job.js';
 import { setWebhook } from '../lib/tools/telegram.js';
-import { getJobStatus, fetchJobLog } from '../lib/tools/github.js';
+import { getAgentJobStatus, fetchAgentJobLog } from '../lib/tools/github.js';
 import { getTelegramAdapter } from '../lib/channels/index.js';
-import { chat, summarizeJob } from '../lib/ai/index.js';
+import { chat, summarizeAgentJob } from '../lib/ai/index.js';
 import { createNotification } from '../lib/db/notifications.js';
 import { loadTriggers } from '../lib/triggers.js';
 import { verifyApiKey } from '../lib/db/api-keys.js';
 import { getConfig } from '../lib/config.js';
+import { parseOAuthState, exchangeCodeForToken } from '../lib/oauth/helper.js';
+import { setAgentJobSecret } from '../lib/db/config.js';
+
+// ── Per-key lock for OAuth token refresh ────────────────────────────
+const _refreshLocks = new Map();
 
 // Bot token — resolved from DB/env, can be overridden by /telegram/register
 let telegramBotToken = null;
@@ -31,7 +36,7 @@ function getFireTriggers() {
 }
 
 // Routes that have their own authentication
-const PUBLIC_ROUTES = ['/telegram/webhook', '/github/webhook', '/ping'];
+const PUBLIC_ROUTES = ['/telegram/webhook', '/github/webhook', '/ping', '/oauth/callback'];
 
 /**
  * Timing-safe string comparison.
@@ -71,29 +76,103 @@ function checkAuth(routePath, request) {
 }
 
 /**
- * Extract job ID from branch name (e.g., "job/abc123" -> "abc123")
+ * Extract agent job ID from branch name (e.g., "agent-job/abc123" -> "abc123")
  */
-function extractJobId(branchName) {
-  if (!branchName || !branchName.startsWith('job/')) return null;
-  return branchName.slice(4);
+function extractAgentJobId(branchName) {
+  if (!branchName) return null;
+  if (branchName.startsWith('agent-job/')) return branchName.slice(10);
+  // Backwards compatibility with old job/ prefix
+  if (branchName.startsWith('job/')) return branchName.slice(4);
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Route handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function handleWebhook(request) {
+async function handleCreateAgentJob(request) {
   const body = await request.json();
   const { job } = body;
   if (!job) return Response.json({ error: 'Missing job field' }, { status: 400 });
 
   try {
-    const result = await createJob(job);
+    const result = await createAgentJob(job, {
+      llmModel: body.llm_model,
+      agentBackend: body.agent_backend,
+    });
     return Response.json(result);
   } catch (err) {
     console.error(err);
-    return Response.json({ error: 'Failed to create job' }, { status: 500 });
+    return Response.json({ error: 'Failed to create agent job' }, { status: 500 });
   }
+}
+
+async function handleGetAgentSecret(request) {
+  const record = verifyApiKey(request.headers.get('x-api-key'));
+  if (record.type !== 'agent_job_api_key') {
+    return Response.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  const key = new URL(request.url).searchParams.get('key');
+  if (!key) return Response.json({ error: 'Missing key' }, { status: 400 });
+
+  const { getAgentJobSecretRaw, setAgentJobSecret: saveSecret } = await import('../lib/db/config.js');
+  const raw = getAgentJobSecretRaw(key);
+  if (!raw) return Response.json({ error: 'Not found' }, { status: 404 });
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Plain string
+    return Response.json({ value: raw });
+  }
+
+  if (parsed.type === 'oauth2') {
+    // Serialize refresh per key — prevents concurrent requests from racing on token rotation
+    if (!_refreshLocks.has(key)) _refreshLocks.set(key, Promise.resolve());
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const prev = _refreshLocks.get(key);
+    _refreshLocks.set(key, gate);
+    await prev;
+
+    try {
+      // Re-read after acquiring lock — previous request may have already refreshed
+      const freshRaw = getAgentJobSecretRaw(key);
+      const freshParsed = freshRaw ? JSON.parse(freshRaw) : parsed;
+
+      const { refreshOAuthToken } = await import('../lib/oauth/helper.js');
+      const newToken = await refreshOAuthToken({
+        refreshToken: freshParsed.token.refresh_token,
+        clientId: freshParsed.clientId,
+        clientSecret: freshParsed.clientSecret,
+        tokenUrl: freshParsed.tokenUrl,
+      });
+      // Persist updated token (refresh token may have rotated)
+      saveSecret(key, JSON.stringify({ ...freshParsed, token: { ...freshParsed.token, ...newToken } }), 'refresh');
+      return Response.json({ value: newToken.access_token });
+    } catch (err) {
+      console.error(`[secrets] OAuth refresh failed for "${key}":`, err.message);
+      return Response.json({ error: `OAuth refresh failed: ${err.message}` }, { status: 502 });
+    } finally {
+      release();
+    }
+  }
+  if (parsed.type === 'oauth_token') {
+    return Response.json({ value: JSON.stringify(parsed.token) });
+  }
+  // Unknown structured value — return raw
+  return Response.json({ value: raw });
+}
+
+async function handleListAgentSecrets(request) {
+  const record = verifyApiKey(request.headers.get('x-api-key'));
+  if (record.type !== 'agent_job_api_key') {
+    return Response.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  const { listAgentJobSecrets } = await import('../lib/db/config.js');
+  return Response.json({ secrets: listAgentJobSecrets() });
 }
 
 async function handleTelegramRegister(request) {
@@ -168,14 +247,14 @@ async function handleGithubWebhook(request) {
   }
 
   const payload = await request.json();
-  const jobId = payload.job_id || extractJobId(payload.branch);
-  if (!jobId) return Response.json({ ok: true, skipped: true, reason: 'not a job' });
+  const agentJobId = payload.agent_job_id || payload.job_id || extractAgentJobId(payload.branch);
+  if (!agentJobId) return Response.json({ ok: true, skipped: true, reason: 'not an agent job' });
 
   try {
     // Fetch log from repo via API (no longer sent in payload)
     let log = payload.log || '';
     if (!log) {
-      log = await fetchJobLog(jobId, payload.commit_sha);
+      log = await fetchAgentJobLog(agentJobId, payload.commit_sha);
     }
 
     const results = {
@@ -189,10 +268,10 @@ async function handleGithubWebhook(request) {
       commit_message: payload.commit_message || '',
     };
 
-    const message = await summarizeJob(results);
+    const message = await summarizeAgentJob(results);
     await createNotification(message, payload);
 
-    console.log(`Notification saved for job ${jobId.slice(0, 8)}`);
+    console.log(`Notification saved for agent-job ${agentJobId.slice(0, 8)}`);
 
     return Response.json({ ok: true, notified: true });
   } catch (err) {
@@ -201,16 +280,87 @@ async function handleGithubWebhook(request) {
   }
 }
 
-async function handleJobStatus(request) {
+async function handleAgentJobStatus(request) {
   try {
     const url = new URL(request.url);
-    const jobId = url.searchParams.get('job_id');
-    const result = await getJobStatus(jobId);
+    const agentJobId = url.searchParams.get('agent_job_id') || url.searchParams.get('job_id');
+    const result = await getAgentJobStatus(agentJobId);
     return Response.json(result);
   } catch (err) {
-    console.error('Failed to get job status:', err);
-    return Response.json({ error: 'Failed to get job status' }, { status: 500 });
+    console.error('Failed to get agent job status:', err);
+    return Response.json({ error: 'Failed to get agent job status' }, { status: 500 });
   }
+}
+
+async function handleOAuthCallback(request) {
+  const url = new URL(request.url);
+  const code = url.searchParams.get('code');
+  const stateParam = url.searchParams.get('state');
+  const error = url.searchParams.get('error');
+
+  if (error) {
+    const desc = url.searchParams.get('error_description') || error;
+    return oauthResultPage(false, desc);
+  }
+
+  if (!code || !stateParam) {
+    return oauthResultPage(false, 'Missing code or state parameter.');
+  }
+
+  try {
+    const state = parseOAuthState(stateParam);
+    const redirectUri = `${process.env.AUTH_URL}/api/oauth/callback`;
+
+    const tokenData = await exchangeCodeForToken({
+      code,
+      clientId: state.clientId,
+      clientSecret: state.clientSecret,
+      tokenUrl: state.tokenUrl,
+      redirectUri,
+    });
+
+    // Save token with typed wrapper so the API can auto-refresh on fetch
+    const secretType = state.secretType || 'oauth2';
+    let stored;
+    if (secretType === 'oauth_token') {
+      stored = JSON.stringify({ type: 'oauth_token', token: tokenData });
+    } else {
+      stored = JSON.stringify({
+        type: 'oauth2',
+        token: tokenData,
+        clientId: state.clientId,
+        clientSecret: state.clientSecret,
+        tokenUrl: state.tokenUrl,
+      });
+    }
+    setAgentJobSecret(state.secretName, stored, 'oauth');
+
+    return oauthResultPage(true, state.secretName);
+  } catch (err) {
+    console.error('OAuth callback error:', err);
+    return oauthResultPage(false, err.message || 'Token exchange failed.');
+  }
+}
+
+function oauthResultPage(success, detail) {
+  const safe = String(detail).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const messagePayload = JSON.stringify({ type: success ? 'oauth-success' : 'oauth-error', detail: safe });
+  const fallback = success
+    ? `Token saved as <strong>${safe}</strong>. You can close this tab and return to settings.`
+    : `Error: ${safe}`;
+
+  const html = `<!DOCTYPE html><html><head><title>OAuth ${success ? 'Success' : 'Error'}</title></head><body>
+<script>
+  if (window.opener) {
+    window.opener.postMessage(${messagePayload}, window.location.origin);
+    window.close();
+  } else {
+    document.body.innerHTML = '<p style="font-family:sans-serif;padding:2rem;">${fallback.replace(/'/g, "\\'")}</p>';
+  }
+</script>
+<noscript><p style="font-family:sans-serif;padding:2rem;">${fallback}</p></noscript>
+</body></html>`;
+  return new Response(html, { status: success ? 200 : 400, headers: { 'Content-Type': 'text/html' } });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,7 +397,7 @@ async function POST(request) {
 
   // Route to handler
   switch (routePath) {
-    case '/create-job':          return handleWebhook(request);
+    case '/create-agent-job':     return handleCreateAgentJob(request);
     case '/telegram/webhook':   return handleTelegramWebhook(request);
     case '/telegram/register':  return handleTelegramRegister(request);
     case '/github/webhook':     return handleGithubWebhook(request);
@@ -264,9 +414,12 @@ async function GET(request) {
   if (authError) return authError;
 
   switch (routePath) {
-    case '/ping':           return Response.json({ message: 'Pong!' });
-    case '/jobs/status':    return handleJobStatus(request);
-    default:                return Response.json({ error: 'Not found' }, { status: 404 });
+    case '/ping':               return Response.json({ message: 'Pong!' });
+    case '/agent-jobs/status':  return handleAgentJobStatus(request);
+    case '/get-agent-job-secret':     return handleGetAgentSecret(request);
+    case '/agent-job-list-secrets':  return handleListAgentSecrets(request);
+    case '/oauth/callback':     return handleOAuthCallback(request);
+    default:                    return Response.json({ error: 'Not found' }, { status: 404 });
   }
 }
 

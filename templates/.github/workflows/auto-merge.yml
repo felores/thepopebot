@@ -8,7 +8,7 @@ on:
 jobs:
   auto-merge:
     runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
-    if: startsWith(github.event.pull_request.head.ref, 'job/')
+    if: startsWith(github.event.pull_request.head.ref, 'agent-job/')
     permissions:
       contents: write
       pull-requests: write

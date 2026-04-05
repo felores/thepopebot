@@ -16,14 +16,14 @@ export async function register() {
   if (typeof window !== 'undefined' || initialized) return;
   initialized = true;
 
+  // Load .env from project root
+  const dotenv = await import('dotenv');
+  dotenv.config();
+
   // Skip database init and cron scheduling during `next build` —
   // these are runtime-only concerns that keep the event loop alive
   // and can cause build output corruption.
   if (process.argv.includes('build')) return;
-
-  // Load .env from project root
-  const dotenv = await import('dotenv');
-  dotenv.config();
 
   // Set AUTH_URL from APP_URL so NextAuth redirects to the correct host (e.g., on sign-out)
   if (process.env.APP_URL && !process.env.AUTH_URL) {
@@ -69,6 +69,10 @@ export async function register() {
   // Start cluster worker runtime (crons + webhook registration)
   const { startClusterRuntime } = await import('../lib/cluster/runtime.js');
   startClusterRuntime();
+
+  // Start internal maintenance cron (cleanup orphaned agent job keys, etc.)
+  const { startMaintenanceCron } = await import('../lib/maintenance.js');
+  startMaintenanceCron();
 
   console.log('thepopebot initialized');
 }

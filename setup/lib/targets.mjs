@@ -20,6 +20,7 @@ export const CONFIG_TARGETS = {
   OPENAI_API_KEY:        { dbSecret: true, secret: 'AGENT_OPENAI_API_KEY' },
   GOOGLE_API_KEY:        { dbSecret: true, secret: 'AGENT_GOOGLE_API_KEY' },
   CUSTOM_API_KEY:        { dbSecret: true, secret: 'AGENT_CUSTOM_API_KEY' },
+  MOONSHOT_API_KEY:      { dbSecret: true, secret: 'AGENT_MOONSHOT_API_KEY' },
   CLAUDE_CODE_OAUTH_TOKEN: { dbSecret: true, secret: 'AGENT_CLAUDE_CODE_OAUTH_TOKEN' },
   GH_WEBHOOK_SECRET:     { dbSecret: true, secret: true },
   TELEGRAM_BOT_TOKEN:    { dbSecret: true },
@@ -28,7 +29,7 @@ export const CONFIG_TARGETS = {
   // Plain config → DB (not .env)
   LLM_PROVIDER:          { db: true, variable: true },
   LLM_MODEL:             { db: true, variable: true },
-  OPENAI_BASE_URL:       { db: true, variable: true },
+  CUSTOM_OPENAI_BASE_URL: { db: true, variable: true },
   AGENT_BACKEND:         { db: true, variable: true },
   TELEGRAM_CHAT_ID:      { db: true },
   TELEGRAM_VERIFICATION: { db: true },

@@ -165,9 +165,23 @@ function ClusterRow({ cluster, onDelete }) {
       >
         <ClusterIcon size={16} />
         <div className="flex-1 min-w-0">
-          <span className="text-sm truncate block">
-            {cluster.name || 'New Cluster'}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm truncate">
+              {cluster.name || 'New Cluster'}
+            </span>
+            <span className={cn(
+              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.65rem] font-medium shrink-0',
+              cluster.enabled
+                ? 'bg-green-500/10 text-green-500'
+                : 'bg-destructive/10 text-destructive'
+            )}>
+              <span className={cn(
+                'size-1.5 rounded-full',
+                cluster.enabled ? 'bg-green-500' : 'bg-destructive'
+              )} />
+              {cluster.enabled ? 'On' : 'Off'}
+            </span>
+          </div>
           <span className="text-xs text-muted-foreground">
             Updated {timeAgo(cluster.updatedAt)}
           </span>

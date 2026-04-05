@@ -10,21 +10,24 @@ Auth flow: `x-api-key` header -> `verifyApiKey()` -> database lookup (hashed, ti
 
 ## Do NOT use these routes for browser UI
 
-Browser-facing features must use **Server Actions** (`'use server'` functions) with `requireAuth()` session checks — never `/api` fetch calls. The only exception is chat streaming, which has its own dedicated route at `/stream/chat` with session auth.
+Browser-facing data fetching uses **fetch route handlers** colocated with pages (`route.js` files in `web/app/`). These check `auth()` session — never use `/api` routes from the browser. Server actions (`'use server'`) are used only for **mutations** (rename, delete, star, config updates) — never for data fetching (causes page refresh issues). Handler implementations live in `lib/chat/api.js`; route files are thin re-exports.
 
 | Caller | Mechanism | Auth |
 |--------|-----------|------|
 | External (cURL, GitHub Actions, Telegram) | `/api` route | `x-api-key` header |
-| Browser UI (data/mutations) | Server Action | `requireAuth()` session |
-| Browser UI (chat streaming) | `/stream/chat` | `auth()` session |
+| Browser UI (data fetching) | Fetch route handler colocated with page | `auth()` session |
+| Browser UI (mutations) | Server action | `requireAuth()` session |
+| Browser UI (streaming) | `/stream/chat`, `/stream/containers`, `/stream/cluster/*/logs` | `auth()` session |
 
 ## Routes
 
 | Method | Path | Auth | Handler |
 |--------|------|------|---------|
 | GET | `/api/ping` | None | Health check |
-| POST | `/api/create-job` | `x-api-key` | Create agent job |
-| GET | `/api/jobs/status` | `x-api-key` | Job status (query: `?job_id=`) |
+| POST | `/api/create-agent-job` | `x-api-key` | Create agent job |
+| GET | `/api/get-agent-job-secret` | `x-api-key` | Get an agent job secret; oauth2 credentials return only the access_token (auto-refreshed) |
+| GET | `/api/agent-job-list-secrets` | `x-api-key` | List agent job secret keys (no values); returns `{secrets: [{key, isSet, updatedAt, secretType}]}` |
+| GET | `/api/agent-jobs/status` | `x-api-key` | Agent job status (query: `?agent_job_id=`) |
 | POST | `/api/telegram/webhook` | Telegram webhook secret | Telegram message handler |
 | POST | `/api/telegram/register` | `x-api-key` | Register bot token + webhook URL |
 | POST | `/api/github/webhook` | GitHub webhook secret | GitHub event handler |

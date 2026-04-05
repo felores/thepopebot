@@ -5,7 +5,7 @@ Clusters are groups of Docker containers spawned on demand from role definitions
 ## Architecture
 
 - **`actions.js`** — Server Actions (`'use server'`) for all cluster UI operations. Handles auth via `requireAuth()`, delegates to DB functions in `lib/db/clusters.js`, and creates directories on disk at lifecycle events.
-- **`execute.js`** — Docker container lifecycle: launch, stop, concurrency checks. Uses `claude-code-cluster-worker` Docker image. Exports path helpers for cluster/role directories.
+- **`execute.js`** — Docker container lifecycle: launch, stop, concurrency checks. Uses `coding-agent-claude-code` Docker image (cluster-worker runtime). Exports path helpers for cluster/role directories.
 - **`runtime.js`** — In-memory trigger runtime. Manages cron schedules (node-cron) and file watchers (chokidar). Webhooks are always-on. Started at boot, reloaded when triggers change.
 - **`stream.js`** — SSE endpoint for console page. Dynamically discovers running containers via `listContainers()`.
 - **`components/`** — React UI (cluster-page, clusters-page, cluster-console-page, clusters-layout).

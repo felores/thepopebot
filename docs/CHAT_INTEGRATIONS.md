@@ -13,7 +13,7 @@ The web chat interface is included out of the box at your APP_URL. No additional
 - **Code workspaces** — Launch interactive or headless coding sessions in Docker containers directly from chat
 - **Voice input** — Real-time voice transcription via AssemblyAI for hands-free messaging
 - **Notifications** — Job completion alerts with unread badges in the sidebar
-- **API key management** — Generate and manage API keys from Settings
+- **API key management** — Generate and manage API keys at Admin > Event Handler > Webhooks
 
 ### Telegram (Optional)
 

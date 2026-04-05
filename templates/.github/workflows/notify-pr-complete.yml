@@ -8,7 +8,7 @@ on:
 jobs:
   notify:
     runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
-    if: startsWith(github.event.workflow_run.head_branch, 'job/')
+    if: startsWith(github.event.workflow_run.head_branch, 'agent-job/')
     permissions:
       contents: read
       pull-requests: read
@@ -45,13 +45,13 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Gather job results and notify
+      - name: Gather agent job results and notify
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           PR_NUMBER="${{ steps.pr.outputs.number }}"
           BRANCH="${{ github.event.workflow_run.head_branch }}"
-          JOB_ID="${BRANCH#job/}"
+          AGENT_JOB_ID="${BRANCH#agent-job/}"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
 
           # Check actual PR merge state
@@ -62,10 +62,10 @@ jobs:
             MERGE_RESULT="not_merged"
           fi
 
-          # 1. Read job description from job.config.json (on disk after checkout)
+          # 1. Read job description from agent-job.config.json (on disk after checkout)
           JOB_CONTENT=""
-          if [ -f "logs/${JOB_ID}/job.config.json" ]; then
-            JOB_CONTENT=$(jq -r '.job // empty' "logs/${JOB_ID}/job.config.json")
+          if [ -f "logs/${AGENT_JOB_ID}/agent-job.config.json" ]; then
+            JOB_CONTENT=$(jq -r '.job // empty' "logs/${AGENT_JOB_ID}/agent-job.config.json")
           fi
 
           # 2. Get last commit message via gh CLI
@@ -89,7 +89,7 @@ jobs:
 
           # 6. Build flat JSON payload
           jq -n \
-            --arg job_id "$JOB_ID" \
+            --arg agent_job_id "$AGENT_JOB_ID" \
             --arg branch "$BRANCH" \
             --arg status "$STATUS" \
             --arg job "$JOB_CONTENT" \
@@ -100,7 +100,7 @@ jobs:
             --arg commit_sha "$COMMIT_SHA" \
             --arg merge_result "$MERGE_RESULT" \
             '{
-              job_id: $job_id,
+              agent_job_id: $agent_job_id,
               branch: $branch,
               status: $status,
               job: $job,

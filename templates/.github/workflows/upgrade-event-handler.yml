@@ -53,7 +53,7 @@ jobs:
               git commit -m "chore: upgrade thepopebot to $NEW_VERSION"
               git push origin "$BRANCH"
               gh pr create --title "chore: upgrade thepopebot" --body "Automated upgrade via upgrade-event-handler workflow." --base main --head "$BRANCH"
-              gh pr merge "$BRANCH" --squash --auto --delete-branch
+              gh pr merge "$BRANCH" --squash --delete-branch
             else
               echo "No changes — thepopebot is already up to date."
             fi

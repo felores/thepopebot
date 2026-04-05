@@ -9,6 +9,11 @@
  *
  * Reads the version from package.json and tags each image as:
  *   stephengpope/thepopebot:{image}-{version}
+ *
+ * The coding-agent images use a two-stage build: a shared base image
+ * (Dockerfile) is built first, then each agent-specific Dockerfile
+ * extends it. The base is tagged as coding-agent-base-{version} and
+ * is NOT pushed — it's only used locally as a build dependency.
  */
 
 import { spawn } from 'child_process';
@@ -23,32 +28,49 @@ const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const VERSION = pkg.version;
 const REPO = 'stephengpope/thepopebot';
 
-const IMAGES = [
+// Base image built first — all coding-agent images depend on it
+const BASE_IMAGE = {
+  name: 'coding-agent-base',
+  context: 'docker/coding-agent',
+  dockerfile: 'docker/coding-agent/Dockerfile',
+};
+
+// Agent-specific images (extend the base)
+const CODING_AGENTS = [
   {
-    name: 'pi-coding-agent-job',
-    context: 'docker/pi-coding-agent-job',
-    dockerfile: 'docker/pi-coding-agent-job/Dockerfile',
+    name: 'coding-agent-claude-code',
+    context: 'docker/coding-agent',
+    dockerfile: 'docker/coding-agent/Dockerfile.claude-code',
   },
   {
-    name: 'claude-code-job',
-    context: 'docker/claude-code-job',
-    dockerfile: 'docker/claude-code-job/Dockerfile',
+    name: 'coding-agent-pi-coding-agent',
+    context: 'docker/coding-agent',
+    dockerfile: 'docker/coding-agent/Dockerfile.pi-coding-agent',
   },
   {
-    name: 'claude-code-workspace',
-    context: 'docker/claude-code-workspace',
-    dockerfile: 'docker/claude-code-workspace/Dockerfile',
+    name: 'coding-agent-gemini-cli',
+    context: 'docker/coding-agent',
+    dockerfile: 'docker/coding-agent/Dockerfile.gemini-cli',
   },
   {
-    name: 'claude-code-headless',
-    context: 'docker/claude-code-headless',
-    dockerfile: 'docker/claude-code-headless/Dockerfile',
+    name: 'coding-agent-codex-cli',
+    context: 'docker/coding-agent',
+    dockerfile: 'docker/coding-agent/Dockerfile.codex-cli',
   },
   {
-    name: 'claude-code-cluster-worker',
-    context: 'docker/claude-code-cluster-worker',
-    dockerfile: 'docker/claude-code-cluster-worker/Dockerfile',
+    name: 'coding-agent-opencode',
+    context: 'docker/coding-agent',
+    dockerfile: 'docker/coding-agent/Dockerfile.opencode',
   },
+  {
+    name: 'coding-agent-kimi-cli',
+    context: 'docker/coding-agent',
+    dockerfile: 'docker/coding-agent/Dockerfile.kimi-cli',
+  },
+];
+
+// Non-coding-agent images (independent, built in parallel)
+const OTHER_IMAGES = [
   {
     name: 'event-handler',
     context: '.',
@@ -56,22 +78,19 @@ const IMAGES = [
   },
 ];
 
+const ALL_IMAGES = [BASE_IMAGE, ...CODING_AGENTS, ...OTHER_IMAGES];
+
 // Parse --image flag
 const filterArg = process.argv.find((_, i, a) => a[i - 1] === '--image');
-const toBuild = filterArg
-  ? IMAGES.filter((img) => img.name === filterArg)
-  : IMAGES;
 
-if (filterArg && toBuild.length === 0) {
+if (filterArg && !ALL_IMAGES.some(img => img.name === filterArg)) {
   console.error(`Unknown image: ${filterArg}`);
-  console.error(`Available: ${IMAGES.map((i) => i.name).join(', ')}`);
+  console.error(`Available: ${ALL_IMAGES.map((i) => i.name).join(', ')}`);
   process.exit(1);
 }
 
-console.log(`Building ${toBuild.length} image(s) in parallel — version ${VERSION}\n`);
-
 // Pad image name for aligned output
-const maxName = Math.max(...toBuild.map((i) => i.name.length));
+const maxName = Math.max(...ALL_IMAGES.map((i) => i.name.length));
 
 function buildImage(img) {
   const tag = `${REPO}:${img.name}-${VERSION}`;
@@ -82,9 +101,16 @@ function buildImage(img) {
   console.log(`  ${label}  building — ${tag}`);
 
   return new Promise((resolve, reject) => {
+    // Tag base image as both versioned and unversioned (agent Dockerfiles use FROM coding-agent-base)
+    const args = ['build', '-t', tag, '-f', dockerfile];
+    if (img.name === 'coding-agent-base') {
+      args.push('-t', 'coding-agent-base');
+    }
+    args.push(context);
+
     const proc = spawn(
       'docker',
-      ['build', '-t', tag, '-f', dockerfile, context],
+      args,
       { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] }
     );
 
@@ -146,14 +172,55 @@ function buildImage(img) {
   });
 }
 
-const results = await Promise.allSettled(toBuild.map(buildImage));
+// Build logic: base first, then agents + others in parallel
+async function run() {
+  if (filterArg) {
+    // Single image build
+    if (filterArg === BASE_IMAGE.name) {
+      console.log(`Building 1 image — version ${VERSION}\n`);
+      await buildImage(BASE_IMAGE);
+    } else {
+      const isCodingAgent = CODING_AGENTS.some(img => img.name === filterArg);
+      if (isCodingAgent) {
+        // Need base first
+        console.log(`Building base + 1 agent image — version ${VERSION}\n`);
+        await buildImage(BASE_IMAGE);
+        const agent = CODING_AGENTS.find(img => img.name === filterArg);
+        await buildImage(agent);
+      } else {
+        console.log(`Building 1 image — version ${VERSION}\n`);
+        const img = OTHER_IMAGES.find(img => img.name === filterArg);
+        await buildImage(img);
+      }
+    }
+    console.log('\n1/1 images built successfully.');
+    return;
+  }
 
-const failed = results.filter((r) => r.status === 'rejected');
-const succeeded = results.filter((r) => r.status === 'fulfilled');
+  // Full build: base first, then everything else in parallel
+  const totalCount = ALL_IMAGES.length;
+  console.log(`Building ${totalCount} images (base first, then parallel) — version ${VERSION}\n`);
 
-console.log(`\n${succeeded.length}/${toBuild.length} images built successfully.`);
+  // Step 1: Build base
+  await buildImage(BASE_IMAGE);
 
-if (failed.length > 0) {
-  console.error(`${failed.length} failed: ${failed.map((r) => r.reason.message).join(', ')}`);
-  process.exit(1);
+  // Step 2: Build all agents + other images in parallel
+  const parallel = [...CODING_AGENTS, ...OTHER_IMAGES];
+  const results = await Promise.allSettled(parallel.map(buildImage));
+
+  const failed = results.filter((r) => r.status === 'rejected');
+  const succeeded = results.filter((r) => r.status === 'fulfilled');
+
+  // +1 for the base image
+  console.log(`\n${succeeded.length + 1}/${totalCount} images built successfully.`);
+
+  if (failed.length > 0) {
+    console.error(`${failed.length} failed: ${failed.map((r) => r.reason.message).join(', ')}`);
+    process.exit(1);
+  }
 }
+
+run().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

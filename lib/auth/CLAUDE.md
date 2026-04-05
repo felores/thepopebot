@@ -38,3 +38,11 @@ Uses lazy `await import('../db/users.js')` to avoid pulling DB at module level �
 - `setup-form.jsx` — Client component, calls `setupAdmin()` server action, validates password length (min 8)
 - `ascii-logo.jsx` — Static branding
 - `ui/` — Primitives (button, input, label, card) used by the forms
+
+## OAuth Token Integration
+
+Coding agent backends (Claude Code, Codex) can authenticate via OAuth tokens instead of API keys. Token management is handled by `lib/db/oauth-tokens.js` (not this directory), which stores encrypted tokens in the `settings` table. The auth flow:
+
+1. User adds OAuth tokens via the Coding Agents admin page (`/admin/event-handler/coding-agents`)
+2. Tokens are encrypted with `lib/db/crypto.js` (AES-256-GCM, key derived from `AUTH_SECRET`)
+3. Agent containers receive tokens at launch — `getNextOAuthToken()` uses LRU rotation to distribute load across multiple tokens

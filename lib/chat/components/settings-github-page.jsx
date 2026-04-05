@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { PlusIcon } from './icons.js';
-import { SecretRow, VariableRow, StatusBadge, Dialog } from './settings-shared.js';
+import { SecretRow, VariableRow, Dialog } from './settings-shared.js';
 import {
   getGitHubConfig,
   updateGitHubSecret,
@@ -15,73 +15,18 @@ import {
 } from '../actions.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Secret grouping & help text
-// ─────────────────────────────────────────────────────────────────────────────
-
-const SECRET_HELP = {
-  GH_WEBHOOK_SECRET: 'Authenticates webhook callbacks from GitHub Actions workflows back to the event handler.',
-  AGENT_GH_TOKEN: 'GitHub token for creating branches and pull requests during agent jobs.',
-  AGENT_ANTHROPIC_API_KEY: 'Anthropic API key for running LLM calls during agent jobs.',
-  AGENT_OPENAI_API_KEY: 'OpenAI API key for running LLM calls during agent jobs.',
-  AGENT_GOOGLE_API_KEY: 'Google AI API key for running LLM calls during agent jobs.',
-  AGENT_CUSTOM_API_KEY: 'API key for custom/self-hosted LLM providers during agent jobs.',
-  AGENT_CLAUDE_CODE_OAUTH_TOKEN: 'OAuth token for the Claude Code agent backend.',
-  AGENT_LLM_BRAVE_API_KEY: 'Brave Search API key — enables web search during agent jobs.',
-};
-
-function getSecretHelp(name) {
-  if (SECRET_HELP[name]) return SECRET_HELP[name];
-  if (name.startsWith('AGENT_LLM_')) return 'Made available to the LLM as a tool credential during agent jobs.';
-  if (name.startsWith('AGENT_')) return 'Passed to the agent container as an environment variable during jobs.';
-  return 'Used by GitHub Actions workflows running on the repository.';
-}
-
-function getSecretGroup(name) {
-  if (name.startsWith('AGENT_LLM_')) return 'llm';
-  if (name.startsWith('AGENT_')) return 'agent';
-  return 'non-agent';
-}
-
-const GROUP_META = {
-  'non-agent': {
-    title: 'Non-Agent Secrets',
-    description: 'Used by GitHub Actions workflows. Not passed to agent containers.',
-  },
-  agent: {
-    title: 'Agent Secrets',
-    description: 'Passed to the agent container as environment variables during jobs.',
-  },
-  llm: {
-    title: 'Agent LLM Secrets',
-    description: 'Made available to the LLM as tool credentials during agent jobs.',
-  },
-};
-
-const GROUP_ORDER = ['non-agent', 'agent', 'llm'];
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Add item dialogs
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SECRET_TYPES = [
-  { value: 'non-agent', label: 'Non-Agent Secret', prefix: '', description: 'Used by GitHub Actions workflows. Not passed to agent containers.' },
-  { value: 'agent', label: 'Agent Secret', prefix: 'AGENT_', description: 'Passed to the agent container as an environment variable during jobs.' },
-  { value: 'llm', label: 'Agent LLM Secret', prefix: 'AGENT_LLM_', description: 'Made available to the LLM as a tool credential during agent jobs.' },
-];
-
 function AddSecretDialog({ open, onAdd, onCancel }) {
-  const [secretType, setSecretType] = useState('non-agent');
   const [name, setName] = useState('');
   const [value, setValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const nameRef = useRef(null);
 
-  const typeInfo = SECRET_TYPES.find((t) => t.value === secretType);
-
   useEffect(() => {
     if (open) {
-      setSecretType('non-agent');
       setName('');
       setValue('');
       setError(null);
@@ -90,13 +35,12 @@ function AddSecretDialog({ open, onAdd, onCancel }) {
     }
   }, [open]);
 
-  const fullName = typeInfo.prefix + name.trim().toUpperCase();
-
   const handleSave = async () => {
-    if (!name.trim() || !value) return;
+    const trimmed = name.trim().toUpperCase();
+    if (!trimmed || !value) return;
     setSaving(true);
     setError(null);
-    const result = await onAdd(fullName, value);
+    const result = await onAdd(trimmed, value);
     setSaving(false);
     if (result?.success) {
       onCancel();
@@ -109,41 +53,16 @@ function AddSecretDialog({ open, onAdd, onCancel }) {
     <Dialog open={open} onClose={onCancel} title="Add Secret">
       <div className="space-y-3">
         <div>
-          <label className="text-xs font-medium mb-1 block">Type</label>
-          <select
-            value={secretType}
-            onChange={(e) => setSecretType(e.target.value)}
-            className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
-          >
-            {SECRET_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </select>
-          <p className="text-xs text-muted-foreground mt-1">{typeInfo.description}</p>
-        </div>
-        <div>
           <label className="text-xs font-medium mb-1 block">Name</label>
-          <div className="flex items-center gap-0">
-            {typeInfo.prefix && (
-              <span className="rounded-l-md border border-r-0 border-border bg-muted px-2.5 py-1.5 text-sm font-mono text-muted-foreground">
-                {typeInfo.prefix}
-              </span>
-            )}
-            <input
-              ref={nameRef}
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
-              placeholder="MY_SECRET"
-              className={`flex-1 border border-border bg-background px-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-foreground ${
-                typeInfo.prefix ? 'rounded-r-md' : 'rounded-md'
-              }`}
-              onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-            />
-          </div>
-          {name.trim() && (
-            <p className="text-xs text-muted-foreground mt-1 font-mono">{fullName}</p>
-          )}
+          <input
+            ref={nameRef}
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
+            placeholder="MY_SECRET"
+            className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-foreground"
+            onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+          />
         </div>
         <div>
           <label className="text-xs font-medium mb-1 block">Value</label>
@@ -360,7 +279,7 @@ export function GitHubTokensPage() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Secrets sub-tab — grouped by type
+// Secrets sub-tab
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function GitHubSecretsPage() {
@@ -385,20 +304,12 @@ export function GitHubSecretsPage() {
     return result;
   };
 
-  // Group secrets by type
-  const groups = {};
-  for (const s of data.secrets) {
-    const group = getSecretGroup(s.name);
-    if (!groups[group]) groups[group] = [];
-    groups[group].push(s);
-  }
-
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-base font-medium">Secrets</h2>
-          <p className="text-sm text-muted-foreground">Encrypted values stored on GitHub for agent jobs. Values cannot be read back after setting.</p>
+          <p className="text-sm text-muted-foreground">Encrypted values stored on GitHub for use in GitHub Actions workflows.</p>
         </div>
         <button
           onClick={() => setShowAdd(true)}
@@ -413,35 +324,20 @@ export function GitHubSecretsPage() {
         onAdd={handleUpdate}
         onCancel={() => setShowAdd(false)}
       />
-      <div className="space-y-6">
-        {GROUP_ORDER.filter((g) => groups[g]?.length).map((groupKey) => {
-          const meta = GROUP_META[groupKey];
-          const secrets = groups[groupKey];
-          return (
-            <div key={groupKey}>
-              <div className="mb-2">
-                <h3 className="text-sm font-medium">{meta.title}</h3>
-                <p className="text-xs text-muted-foreground">{meta.description}</p>
-              </div>
-              <div className="rounded-lg border bg-card p-4">
-                <div className="divide-y divide-border">
-                  {secrets.map((s) => (
-                    <SecretRow
-                      key={s.name}
-                      label={s.name}
-                      mono
-                      isSet={s.isSet}
-                      helpText={getSecretHelp(s.name)}
-                      onSave={(val) => handleUpdate(s.name, val)}
-                      onDelete={() => handleDelete(s.name)}
-                      icon={false}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+      <div className="rounded-lg border bg-card p-4">
+        <div className="divide-y divide-border">
+          {data.secrets.map((s) => (
+            <SecretRow
+              key={s.name}
+              label={s.name}
+              mono
+              isSet={s.isSet}
+              onSave={(val) => handleUpdate(s.name, val)}
+              onDelete={() => handleDelete(s.name)}
+              icon={false}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );

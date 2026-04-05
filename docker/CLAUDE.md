@@ -2,19 +2,17 @@
 
 ## Images
 
-All tagged `stephengpope/thepopebot:{tag}-{version}`:
+All tagged `stephengpope/thepopebot:{tag}-{version}`. A unified `coding-agent` base image supports multiple agents and runtimes:
 
 | Image | Lifecycle | Purpose |
 |-------|-----------|---------|
 | `event-handler` | Long-lived | Next.js server. Installs npm package from npm, user project volume-mounted at `/app`, PM2 process manager |
-| `pi-coding-agent-job` | Ephemeral | Clones `job/*` branch, installs skill deps, builds system prompt from SOUL.md + JOB_AGENT.md, runs Pi agent, commits results + creates PR |
-| `claude-code-job` | Ephemeral | Same flow as Pi but runs Claude Code CLI with `--dangerously-skip-permissions` |
-| `claude-code-workspace` | Long-lived | Clones repo, runs Claude Code in tmux, serves via ttyd on port 7681 |
-| `claude-code-cluster-worker` | Ephemeral | Runs Claude Code headlessly for cluster worker tasks — no git clone/merge, workspace bind-mounted |
+| `coding-agent-claude-code` | Ephemeral/Long-lived | Unified coding agent: agent-job, headless, interactive, cluster-worker, and command runtimes |
+| `coding-agent-pi` | Ephemeral/Long-lived | Same as above but with Pi coding agent |
 
 ## Docker Compose
 
-`docker-compose.yml` runs: Traefik (reverse proxy), event-handler, self-hosted GitHub runner. Job containers are NOT in compose — created on-demand by `run-job.yml` workflow.
+`docker-compose.yml` runs: Traefik (reverse proxy), event-handler. Agent-job containers are NOT in compose — created on-demand by the event handler via Docker API.
 
 ## Internal Only
 
@@ -22,4 +20,4 @@ This directory is build infrastructure — NOT published to npm, NOT scaffolded 
 
 ## Secrets Flow
 
-GitHub Actions secrets → `SECRETS` and `LLM_SECRETS` JSON env vars → `entrypoint.sh` exports individual keys into the container environment.
+Agent-job containers receive auth env vars directly from the event handler via `buildAgentAuthEnv()` in `lib/tools/docker.js`. No GitHub Actions secrets flow — containers are launched locally.

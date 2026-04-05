@@ -28,7 +28,7 @@ function LinkSafetyModal({ url, isOpen, onClose, onConfirm }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onClick={onClose}
     >
       <div
@@ -77,16 +77,26 @@ function formatContent(content) {
   return JSON.stringify(content, null, 2);
 }
 
-function ToolCall({ part }) {
+function ToolCall({ part, className }) {
   const [expanded, setExpanded] = useState(false);
 
   const toolName = part.toolName || (part.type?.startsWith('tool-') ? part.type.slice(5) : 'tool');
-  const displayName = getToolDisplayName(toolName);
+  const isUnknown = toolName === '__unknown_event__';
+  const displayName = isUnknown ? 'Unknown Event' : getToolDisplayName(toolName);
   const state = part.state || 'input-available';
 
-  const isRunning = state === 'input-streaming' || state === 'input-available';
-  const isDone = state === 'output-available';
-  const isError = state === 'output-error';
+  // Detect tool-level failure: output is valid JSON with success: false
+  const hasOutputError = (() => {
+    if (state !== 'output-available' || !part.output) return false;
+    try {
+      const parsed = typeof part.output === 'string' ? JSON.parse(part.output) : part.output;
+      return parsed?.success === false;
+    } catch { return false; }
+  })();
+
+  const isRunning = !isUnknown && (state === 'input-streaming' || state === 'input-available');
+  const isDone = !isUnknown && state === 'output-available' && !hasOutputError;
+  const isError = state === 'output-error' || hasOutputError;
 
   // Auto-redirect when start_coding completes successfully.
   // mountedDone captures whether the tool was already finished when the component
@@ -103,15 +113,85 @@ function ToolCall({ part }) {
     } catch {}
   }, [toolName, isDone, part.output]);
 
+  // Unknown events: red collapsible box
+  if (isUnknown) {
+    const eventType = part.input?.type || 'unknown';
+    return (
+      <div className={`my-1 rounded-lg border border-destructive/50 bg-destructive/5${className ? ` ${className}` : ''}`}>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-destructive/10 rounded-lg"
+        >
+          <XIcon size={14} className="text-destructive shrink-0" />
+          <span className="font-medium text-destructive">Unknown Event</span>
+          <span className="text-xs text-destructive/70">{eventType}</span>
+          <ChevronDownIcon
+            size={14}
+            className={cn(
+              'ml-auto text-destructive/70 transition-transform shrink-0',
+              expanded && 'rotate-180'
+            )}
+          />
+        </button>
+        {expanded && (
+          <div className="border-t border-destructive/30 px-3 py-2 text-xs">
+            <pre className="whitespace-pre-wrap break-all rounded bg-muted p-2 text-foreground overflow-x-auto max-h-64 overflow-y-auto">
+              {formatContent(part.output || part.input)}
+            </pre>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="my-1 rounded-lg border border-border bg-background">
+    <div className={`my-1 rounded-lg border border-border bg-background${className ? ` ${className}` : ''}`}>
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted/50 rounded-lg"
       >
-        <WrenchIcon size={14} className="text-muted-foreground shrink-0" />
-        <span className="font-medium text-foreground">{displayName}</span>
-        <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+        <WrenchIcon size={14} className="text-muted-foreground shrink-0 mt-0.5" />
+        <span className="flex flex-col min-w-0 flex-1">
+          <span className="flex items-center gap-2">
+            <span className="font-medium text-foreground">{displayName}</span>
+            {(() => {
+              try {
+                // Read from input (available immediately) or output meta (historical chats)
+                const agent = part.input?.codingAgent;
+                const backend = part.input?.backendApi;
+                if (agent || backend) {
+                  return (
+                    <span className="text-xs text-muted-foreground">
+                      {[agent, backend].filter(Boolean).join(' · ')}
+                    </span>
+                  );
+                }
+                if (isDone) {
+                  const o = typeof part.output === 'string' ? JSON.parse(part.output) : part.output;
+                  const meta = Array.isArray(o) ? o.find(e => e.type === 'meta') : o;
+                  if (meta?.codingAgent || meta?.backendApi) {
+                    return (
+                      <span className="text-xs text-muted-foreground">
+                        {[meta.codingAgent, meta.backendApi].filter(Boolean).join(' · ')}
+                      </span>
+                    );
+                  }
+                }
+              } catch {}
+              return null;
+            })()}
+          </span>
+          {/* DISABLED — may be re-enabled later. Do NOT remove from codebase.
+             Shows the tool's prompt text as a subtitle below the tool name.
+          {(() => {
+            const prompt = part.input?.prompt;
+            if (!prompt) return null;
+            return (
+              <span className="text-xs text-muted-foreground whitespace-pre-wrap">{prompt}</span>
+            );
+          })()} */}
+        </span>
+        <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
           {isRunning && (
             <>
               <SpinnerIcon size={12} />
@@ -174,6 +254,7 @@ export function PreviewMessage({ message, isLoading, onRetry, onEdit }) {
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState('');
   const textareaRef = useRef(null);
+  const [showWorking, setShowWorking] = useState(false);
 
   // Extract text from parts (AI SDK v5+) or fall back to content
   const text =
@@ -183,6 +264,24 @@ export function PreviewMessage({ message, isLoading, onRetry, onEdit }) {
       .join('\n') ||
     message.content ||
     '';
+
+  const partsLength = message.parts?.length || 0;
+  const textLength = text.length;
+  let lastToolPart;
+  for (let i = (message.parts?.length || 0) - 1; i >= 0; i--) {
+    if (message.parts[i].type?.startsWith('tool-')) { lastToolPart = message.parts[i]; break; }
+  }
+  const hasRunningTool = (lastToolPart?.state === 'input-streaming' || lastToolPart?.state === 'input-available') || false;
+
+  useEffect(() => {
+    if (!isLoading || hasRunningTool) {
+      setShowWorking(false);
+      return;
+    }
+    setShowWorking(false);
+    const timer = setTimeout(() => setShowWorking(true), 500);
+    return () => clearTimeout(timer);
+  }, [isLoading, partsLength, textLength, hasRunningTool]);
 
   // Extract file parts
   const fileParts = message.parts?.filter((p) => p.type === 'file') || [];
@@ -329,30 +428,42 @@ export function PreviewMessage({ message, isLoading, onRetry, onEdit }) {
               ) : (
                 <>
                   {message.parts?.length > 0 ? (
-                    message.parts.map((part, i) => {
-                      if (part.type === 'text') {
-                        return <Streamdown key={i} mode={isLoading ? 'streaming' : 'static'} linkSafety={linkSafety}>{part.text}</Streamdown>;
-                      }
-                      if (part.type === 'file') {
-                        if (part.mediaType?.startsWith('image/')) {
+                    <>
+                      {message.parts.map((part, i) => {
+                        if (part.type === 'text') {
+                          const prevPart = message.parts[i - 1];
+                          const afterTool = prevPart?.type?.startsWith('tool-');
+                          return <Streamdown key={i} className={afterTool ? 'mt-3' : undefined} mode={isLoading ? 'streaming' : 'static'} linkSafety={linkSafety}>{part.text}</Streamdown>;
+                        }
+                        if (part.type === 'file') {
+                          if (part.mediaType?.startsWith('image/')) {
+                            return (
+                              <div key={i} className="mb-2">
+                                <img src={part.url} alt="attachment" className="max-h-64 max-w-full rounded-lg object-contain" />
+                              </div>
+                            );
+                          }
                           return (
-                            <div key={i} className="mb-2">
-                              <img src={part.url} alt="attachment" className="max-h-64 max-w-full rounded-lg object-contain" />
+                            <div key={i} className="mb-2 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs bg-foreground/10">
+                              <FileTextIcon size={12} />
+                              <span className="max-w-[150px] truncate">{part.name || part.mediaType || 'file'}</span>
                             </div>
                           );
                         }
-                        return (
-                          <div key={i} className="mb-2 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs bg-foreground/10">
-                            <FileTextIcon size={12} />
-                            <span className="max-w-[150px] truncate">{part.name || part.mediaType || 'file'}</span>
-                          </div>
-                        );
-                      }
-                      if (part.type?.startsWith('tool-')) {
-                        return <ToolCall key={part.toolCallId || i} part={part} />;
-                      }
-                      return null;
-                    })
+                        if (part.type?.startsWith('tool-')) {
+                          const prevPart = message.parts[i - 1];
+                          const afterText = prevPart?.type === 'text';
+                          return <ToolCall key={part.toolCallId || i} part={part} className={afterText ? 'mt-3' : undefined} />;
+                        }
+                        return null;
+                      })}
+                      {showWorking && (
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <SpinnerIcon size={14} />
+                          <span>Working...</span>
+                        </div>
+                      )}
+                    </>
                   ) : text ? (
                     <Streamdown mode={isLoading ? 'streaming' : 'static'} linkSafety={linkSafety}>{text}</Streamdown>
                   ) : isLoading && !hasToolParts ? (

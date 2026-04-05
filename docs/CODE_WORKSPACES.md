@@ -6,7 +6,7 @@ Code workspaces are browser-based interactive coding sessions that run inside Do
 
 ## Creating a Workspace
 
-Start a code workspace from any chat conversation. When you ask the AI to help with code, it can launch a workspace using the `start_coding` tool. The AI will:
+Start a code workspace from any chat conversation. When you ask the AI to help with code, it can launch a workspace using the `coding_agent` tool. The AI will:
 
 1. Spin up a Docker container with Claude Code and your repository cloned
 2. Create a feature branch for your changes
@@ -44,7 +44,7 @@ The toolbar at the bottom of the Claude Code tab provides quick actions:
 
 ### Startup
 
-When a workspace is created, a Docker container is launched from the `claude-code-workspace` image. The container:
+When a workspace is created, a Docker container is launched from the selected coding agent's Docker image (interactive runtime). The container:
 
 - Clones your repository and checks out the specified branch
 - Creates a feature branch if one was requested
@@ -58,6 +58,12 @@ Workspace data is stored in a Docker named volume. If the container stops or cra
 - **Stopped or paused containers** are restarted
 - **Dead or missing containers** are recreated with the same volume, preserving your work
 - The browser client automatically attempts to reconnect and will trigger container recovery if needed
+
+### Session Persistence
+
+Terminal sessions run inside tmux, which means they survive browser disconnects. If you close your browser tab and reopen the workspace, your terminal state is preserved — running processes, command history, and output are all still there.
+
+The workspace also supports OSC 52 clipboard integration for copying text from the terminal to your system clipboard.
 
 ### Closing a Session
 
@@ -85,7 +91,7 @@ The chat UI provides a toggle to switch between interactive and headless mode af
 
 ### How It Works
 
-1. The AI calls the `start_headless_coding` tool with your task description
+1. The AI calls the `coding_agent` tool with your task description
 2. An ephemeral container launches, clones your repo, and creates a feature branch
 3. Claude Code runs the task in prompt mode (`claude -p`)
 4. Output streams live back to your chat — you can watch progress in real-time
@@ -102,6 +108,6 @@ Code workspaces require:
 
 - **Docker** — The event handler needs access to the Docker socket (`/var/run/docker.sock`)
 - **`GH_TOKEN`** — A GitHub token for cloning repositories
-- **`CLAUDE_CODE_OAUTH_TOKEN`** — Authentication token for Claude Code inside the container
+- **Coding agent credentials** — OAuth token or API key for your selected coding agent, configured at Admin > Event Handler > Coding Agents
 
-These are configured during initial setup. No additional workspace-specific configuration is needed.
+These are configured during initial setup. See [Coding Agents](CODING_AGENTS.md) for details on the five supported backends and their auth modes.

@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "streamdown/styles.css";
+@import "diff2html/bundles/css/diff2html.min.css";
 @source "../node_modules/thepopebot/lib/**/*.{js,jsx}";
 @source "../node_modules/streamdown/dist/**/*.js";
 
@@ -13,7 +14,9 @@
   --border: #e5e5e5;
   --input: #f5f5f5;
   --ring: #171717;
-  --destructive: #dc2626;
+  --destructive: #ef4444;
+  --accent: #f5f5f5;
+  --card: #ffffff;
 }
 
 .dark {
@@ -27,6 +30,8 @@
   --input: #171717;
   --ring: #ededed;
   --destructive: #ef4444;
+  --accent: #1a1a1a;
+  --card: #0a0a0a;
 }
 
 @theme inline {
@@ -40,6 +45,8 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-destructive: var(--destructive);
+  --color-accent: var(--accent);
+  --color-card: var(--card);
   --text-xs: 0.8125rem;
   --text-xs--line-height: 1.125rem;
   --text-sm: 1rem;
@@ -68,6 +75,14 @@
 .scrollbar-thin::-webkit-scrollbar-thumb {
   background-color: var(--border);
   border-radius: 3px;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }
 
 /* Code block horizontal scroll — target the pre (code-block-body), not the

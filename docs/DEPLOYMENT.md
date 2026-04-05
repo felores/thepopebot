@@ -10,14 +10,13 @@ npm run dev    # Next.js dev server
 
 ```bash
 npx thepopebot init   # Scaffold project
-npm run setup          # Configure .env, GitHub secrets, Telegram
-npm run build          # Next.js build → generates .next/
+npm run setup          # Configure .env, database, GitHub secrets
 docker-compose up      # Start Traefik + event handler + runner
 ```
 
 ## Event Handler Docker Image
 
-The event handler Dockerfile (`docker/event-handler/Dockerfile`) is **not a self-contained application image**. It uses a multi-stage build: the first stage installs build tools (python3, make, g++) to compile native addons during `npm install`, then the final image keeps only runtime dependencies (git, gh, PM2) and the pre-compiled `node_modules`. It does **not** contain the Next.js app code and does **not** run `next build`.
+The event handler Dockerfile (`docker/event-handler/Dockerfile`) uses a multi-stage build: the first stage installs build tools (python3, make, g++) to compile native addons during `npm install`, then the final image keeps only runtime dependencies (git, gh, PM2) and the pre-compiled `node_modules`. The `.next` build output is baked into the Docker image.
 
 ### How the two volume mounts work together
 
@@ -35,9 +34,9 @@ So the host's node_modules (compiled for macOS) are never used inside the contai
 
 The user runs `npm install` on the host (macOS) to get thepopebot and all dependencies. This is needed because `next build` must resolve all `thepopebot/*` imports to compile the app — without thepopebot in local node_modules, the build fails immediately on unresolved imports. The `.next/` output is just bundled JavaScript — it's platform-independent, so building on macOS and running on Linux is fine. But Next.js still needs `node_modules` at **runtime** for native modules (like `better-sqlite3`) and server-side requires that aren't bundled. Those native modules must be compiled for Linux, which is why the Docker image has its own separate `npm install`. Different purposes, different platforms, both necessary.
 
-### The build must happen before the container starts
+### Rebuilds after code changes
 
-Before running `docker-compose up`, the user must run `npm run build` on the host to generate `.next/`. If the container starts without a valid `.next/` build, PM2 will crash-loop with "Could not find a production build" until a build is available. After code changes, `rebuild-event-handler.yml` runs `next build` inside the container via `docker exec` (using the container's node_modules).
+After code changes are pushed to `main`, the `rebuild-event-handler.yml` workflow runs `next build` inside the container via `docker exec` (using the container's node_modules) and restarts PM2.
 
 ## docker-compose.yml Services
 
@@ -47,7 +46,7 @@ Before running `docker-compose up`, the user must run `npm run build` on the hos
 | **event-handler** | `stephengpope/thepopebot:event-handler-${THEPOPEBOT_VERSION}` | Node.js runtime + PM2, serves the bind-mounted Next.js app on port 80 |
 | **runner** | `myoung34/github-runner:latest` | Self-hosted GitHub Actions runner for executing jobs |
 
-The runner registers as a self-hosted GitHub Actions runner, enabling `run-job.yml` to spin up Docker agent containers directly on your server. It also has a read-only volume mount (`.:/project:ro`) so `upgrade-event-handler.yml` can run `docker compose` commands against the project's compose file.
+The runner registers as a self-hosted GitHub Actions runner. It has a read-only volume mount (`.:/project:ro`) so `upgrade-event-handler.yml` can run `docker compose` commands against the project's compose file. Agent job containers are launched directly by the event handler via the Docker API — they don't use GitHub Actions.
 
 ## Deploy to a VPS
 
@@ -123,10 +122,9 @@ Add a `#` to comment out the HTTP entrypoint, and remove the `#` from the two HT
 - traefik.http.routers.event-handler.tls.certresolver=letsencrypt
 ```
 
-### 4. Build and launch
+### 4. Launch
 
 ```bash
-npm run build
 docker compose up -d
 ```
 

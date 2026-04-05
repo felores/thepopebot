@@ -216,7 +216,7 @@ export function CronsPage() {
           </div>
           <p className="text-sm font-medium mb-1">No cron jobs configured</p>
           <p className="text-xs text-muted-foreground max-w-sm">
-            Add scheduled jobs by editing <span className="font-mono">config/CRONS.json</span> in your project.
+            Add scheduled jobs by editing <span className="font-mono">agent-job/CRONS.json</span> in your project.
           </p>
         </div>
       ) : (

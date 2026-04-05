@@ -1,81 +1,103 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { cn } from '../../utils.js';
 
-const DropdownContext = createContext({ open: false, onOpenChange: () => {} });
+const DropdownContext = createContext({ open: false, onOpenChange: () => {}, triggerRef: { current: null } });
 
 export function DropdownMenu({ children, open: controlledOpen, onOpenChange: controlledOnOpenChange }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen !== undefined ? controlledOpen : internalOpen;
   const onOpenChange = controlledOnOpenChange || setInternalOpen;
+  const triggerRef = useRef(null);
 
   return (
-    <DropdownContext.Provider value={{ open, onOpenChange }}>
+    <DropdownContext.Provider value={{ open, onOpenChange, triggerRef }}>
       <div className="relative">{children}</div>
     </DropdownContext.Provider>
   );
 }
 
 export function DropdownMenuTrigger({ children, asChild, ...props }) {
-  const { open, onOpenChange } = useContext(DropdownContext);
+  const { open, onOpenChange, triggerRef } = useContext(DropdownContext);
   const handleClick = (e) => {
     e.stopPropagation();
     onOpenChange(!open);
   };
   if (asChild && children) {
     return (
-      <span onClick={handleClick} {...props}>
+      <span ref={triggerRef} onClick={handleClick} {...props}>
         {children}
       </span>
     );
   }
   return (
-    <button onClick={handleClick} {...props}>
+    <button ref={triggerRef} onClick={handleClick} {...props}>
       {children}
     </button>
   );
 }
 
 export function DropdownMenuContent({ children, className, align = 'start', side = 'bottom', sideOffset = 4, ...props }) {
-  const { open, onOpenChange } = useContext(DropdownContext);
+  const { open, onOpenChange, triggerRef } = useContext(DropdownContext);
   const ref = useRef(null);
+  const [pos, setPos] = useState(null);
+
+  const updatePosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    setPos({
+      top: side === 'bottom' ? rect.bottom + sideOffset : undefined,
+      bottom: side === 'top' ? window.innerHeight - rect.top + sideOffset : undefined,
+      left: align === 'start' ? rect.left : undefined,
+      right: align === 'end' ? window.innerWidth - rect.right : undefined,
+    });
+  }, [triggerRef, side, align, sideOffset]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) { setPos(null); return; }
+    updatePosition();
     const handleClickOutside = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) {
+      if (ref.current && !ref.current.contains(e.target) && triggerRef.current && !triggerRef.current.contains(e.target)) {
         onOpenChange(false);
       }
     };
     const handleEsc = (e) => {
       if (e.key === 'Escape') onOpenChange(false);
     };
+    const handleScroll = () => updatePosition();
     setTimeout(() => document.addEventListener('click', handleClickOutside), 0);
     document.addEventListener('keydown', handleEsc);
+    window.addEventListener('scroll', handleScroll, true);
     return () => {
       document.removeEventListener('click', handleClickOutside);
       document.removeEventListener('keydown', handleEsc);
+      window.removeEventListener('scroll', handleScroll, true);
     };
-  }, [open, onOpenChange]);
+  }, [open, onOpenChange, triggerRef, updatePosition]);
 
-  if (!open) return null;
+  if (!open || !pos) return null;
 
-  return (
+  return createPortal(
     <div
       ref={ref}
+      style={{
+        position: 'fixed',
+        top: pos.top,
+        bottom: pos.bottom,
+        left: pos.left,
+        right: pos.right,
+      }}
       className={cn(
-        'absolute z-50 min-w-[8rem] overflow-hidden rounded-md border border-border bg-background/80 backdrop-blur-sm p-1 text-foreground shadow-lg',
-        side === 'bottom' && `top-full mt-1`,
-        side === 'top' && `bottom-full mb-1`,
-        align === 'end' && 'right-0',
-        align === 'start' && 'left-0',
+        'z-50 min-w-[8rem] overflow-hidden rounded-md border border-border bg-background/80 backdrop-blur-sm p-1 text-foreground shadow-lg',
         className
       )}
       {...props}
     >
       {children}
-    </div>
+    </div>,
+    document.body
   );
 }
 

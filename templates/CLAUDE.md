@@ -11,7 +11,8 @@ This directory contains files that get copied into user projects when they run `
 
 ## What belongs here
 
-- **User-editable config**: `config/SOUL.md`, `config/JOB_PLANNING.md`, `config/CRONS.json`, `config/TRIGGERS.json`, etc.
+- **Agent job config**: `agent-job/SOUL.md`, `agent-job/CRONS.json`, etc.
+- **Event handler config**: `event-handler/agent-chat/SYSTEM.md`, `event-handler/TRIGGERS.json`, etc.
 - **GitHub Actions workflows**: `.github/workflows/`
 - **Docker compose**: `docker-compose.yml`
 
@@ -30,4 +31,4 @@ If you're adding a feature to the event handler, put it in the package. Template
 
 ## Managed vs. User-Owned
 
-Files inside managed paths (`.github/workflows/`, etc.) are auto-synced by `init` — stale files are deleted, changed files are overwritten. Never add user-editable content to managed paths. User customization goes in `config/`.
+Files inside managed paths (`.github/workflows/`, etc.) are auto-synced by `init` — stale files are deleted, changed files are overwritten. Never add user-editable content to managed paths. User customization goes in `agent-job/` and `event-handler/`.

@@ -9,7 +9,7 @@ Clusters are multi-role agent teams. You define a set of roles, each with its ow
 Create a cluster from the web UI. Each cluster has:
 
 - **Name** — Display label for the cluster.
-- **System Prompt** — Shared context appended to every role's system prompt. Use this for mission, goals, and shared instructions. Defaults to the template in `config/CLUSTER_SYSTEM_PROMPT.md`.
+- **System Prompt** — Shared context appended to every role's system prompt. Use this for mission, goals, and shared instructions. Defaults to the template in `event-handler/clusters/SYSTEM.md`.
 - **Shared Folders** — Named subdirectories under `shared/` that all roles can access (e.g., `docs`, `output`).
 - **Enabled/Disabled** — Toggle the cluster on or off. Disabling stops all running containers and prevents new triggers from firing.
 
@@ -22,7 +22,7 @@ Each role within a cluster represents one agent type. A role has:
 | Field | Description |
 |-------|-------------|
 | **Role Name** | Display name (e.g., "Researcher", "Writer") |
-| **Role Instructions** | Markdown prompt describing what this role does. Defaults to `config/CLUSTER_ROLE_PROMPT.md`. |
+| **Role Instructions** | Markdown prompt describing what this role does. Defaults to `event-handler/clusters/ROLE.md`. |
 | **Prompt** | The user-facing task prompt passed to the agent (default: "Execute your role.") |
 | **Max Concurrency** | Maximum number of simultaneous containers for this role (default: 1) |
 | **Trigger Config** | How this role gets activated (see Triggers below) |
@@ -183,6 +183,6 @@ Each worker container receives two prompts:
 
 2. **User Prompt** (`-p`) — The role's `prompt` field (or a webhook-provided override). This is the actual task instruction.
 
-The default role template (`config/CLUSTER_ROLE_PROMPT.md`) introduces the agent to the cluster concept and provides the workspace layout via `{{WORKSPACE}}`. The default system prompt template (`config/CLUSTER_SYSTEM_PROMPT.md`) has placeholders for mission, vision, goals, and values.
+The default role template (`event-handler/clusters/ROLE.md`) introduces the agent to the cluster concept and provides the workspace layout via `{{WORKSPACE}}`. The default system prompt template (`event-handler/clusters/SYSTEM.md`) has placeholders for mission, vision, goals, and values.
 
-Customize these templates in your project's `config/` directory to set defaults for new clusters and roles.
+Customize these templates in your project's `event-handler/` directory to set defaults for new clusters and roles.

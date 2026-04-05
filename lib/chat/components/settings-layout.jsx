@@ -2,16 +2,15 @@
 
 import { useState, useEffect } from 'react';
 import { PageLayout } from './page-layout.js';
-import { UserIcon, ClockIcon, ZapIcon, KeyIcon, MessageIcon, GitBranchIcon, SettingsIcon } from './icons.js';
+import { UserIcon, ClockIcon, ZapIcon, MessageIcon, GitBranchIcon, SettingsIcon } from './icons.js';
 
 const TABS = [
-  { id: 'general', label: 'General', href: '/admin/general', icon: SettingsIcon },
+  { id: 'event-handler', label: 'Event Handler', href: '/admin/event-handler', icon: MessageIcon },
+  { id: 'github', label: 'GitHub', href: '/admin/github', icon: GitBranchIcon },
   { id: 'users', label: 'Users', href: '/admin/users', icon: UserIcon },
   { id: 'crons', label: 'Crons', href: '/admin/crons', icon: ClockIcon },
   { id: 'triggers', label: 'Triggers', href: '/admin/triggers', icon: ZapIcon },
-  { id: 'api-keys', label: 'API Keys', href: '/admin/api-keys', icon: KeyIcon },
-  { id: 'chat', label: 'Chat', href: '/admin/chat', icon: MessageIcon },
-  { id: 'github', label: 'GitHub', href: '/admin/github', icon: GitBranchIcon },
+  { id: 'general', label: 'General', href: '/admin/general', icon: SettingsIcon },
 ];
 
 export function SettingsLayout({ session, children }) {
@@ -29,7 +28,7 @@ export function SettingsLayout({ session, children }) {
       </div>
 
       {/* Tab navigation */}
-      <div className="flex gap-1 border-b border-border mb-6 overflow-x-auto">
+      <div className="flex gap-1 border-b border-border mb-6 overflow-x-auto scrollbar-hide max-w-full">
         {TABS.map((tab) => {
           const isActive = activePath === tab.href || activePath.startsWith(tab.href + '/');
           const Icon = tab.icon;

@@ -92,7 +92,7 @@ export function NotificationsPage({ session }) {
                 <BellIcon size={16} />
               </div>
               <div className="flex-1 min-w-0 overflow-hidden">
-                <div className="text-sm prose-sm overflow-hidden">
+                <div className="text-sm prose-sm overflow-hidden break-words">
                   <Streamdown mode="static" linkSafety={linkSafety}>{n.notification}</Streamdown>
                 </div>
                 <span className="text-xs text-muted-foreground">

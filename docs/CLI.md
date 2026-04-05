@@ -10,10 +10,8 @@ When you ran `thepopebot init` the first time, it scaffolded a project folder wi
 
 | Files | What they do |
 |-------|-------------|
-| `config/SOUL.md`, `JOB_PLANNING.md`, `JOB_AGENT.md`, etc. | Your agent's personality, behavior, and prompts |
-| `config/CRONS.json`, `TRIGGERS.json` | Your scheduled jobs and webhook triggers |
-| `docker/pi-coding-agent-job/` | The Dockerfile for the Pi coding agent job container |
-| `docker/claude-code-job/` | The Dockerfile for the Claude Code agent job container |
+| `agent-job/SOUL.md`, `SYSTEM.md`, `CRONS.json`, etc. | Your agent's personality, behavior, prompts, and scheduled jobs |
+| `event-handler/TRIGGERS.json`, `SUMMARY.md`, etc. | Your webhook triggers and event handler prompts |
 
 **Managed files** — These are infrastructure files that need to stay in sync with the package version. `init` auto-updates them for you:
 
@@ -21,9 +19,8 @@ When you ran `thepopebot init` the first time, it scaffolded a project folder wi
 |-------|-------------|
 | `.github/workflows/` | GitHub Actions that run jobs, auto-merge PRs, rebuild on deploy |
 | `docker-compose.yml` | Defines how your containers run together (Traefik, event handler, runner) |
-| `docker/event-handler/` | The Dockerfile for the event handler container |
 | `.dockerignore` | Keeps unnecessary files out of Docker builds |
-| `app/` | Next.js pages, layouts, and routes |
+| `.gitignore` | Git ignore rules |
 | `CLAUDE.md` | AI assistant context for your project |
 
 ### What happens when you run `init`
@@ -35,7 +32,7 @@ When you ran `thepopebot init` the first time, it scaffolded a project folder wi
 Updated templates available:
 These files differ from the current package templates.
 
-  config/CRONS.json
+  agent-job/CRONS.json
 
 To view differences:  npx thepopebot diff <file>
 To reset to default:  npx thepopebot reset <file>
@@ -44,8 +41,8 @@ To reset to default:  npx thepopebot reset <file>
 You can review at your own pace:
 
 ```bash
-npx thepopebot diff config/CRONS.json    # see what changed
-npx thepopebot reset config/CRONS.json   # accept the new template
+npx thepopebot diff agent-job/CRONS.json    # see what changed
+npx thepopebot reset agent-job/CRONS.json   # accept the new template
 ```
 
 ### If you've modified managed files
@@ -101,12 +98,6 @@ These commands set individual GitHub repository secrets/variables using the `gh`
 
 | Command | Description |
 |---------|-------------|
-| `set-agent-secret KEY [VALUE]` | Set `AGENT_<KEY>` GitHub secret and update `.env` |
-| `set-agent-llm-secret KEY [VALUE]` | Set `AGENT_LLM_<KEY>` GitHub secret |
 | `set-var KEY [VALUE]` | Set a GitHub repository variable |
 
-GitHub secrets use a prefix convention so the workflow can route them correctly:
-
-- **`AGENT_`** — Protected secrets passed to the Docker container (filtered from LLM). Example: `AGENT_GH_TOKEN`, `AGENT_ANTHROPIC_API_KEY`
-- **`AGENT_LLM_`** — LLM-accessible secrets (not filtered). Example: `AGENT_LLM_BRAVE_API_KEY`
-- **No prefix** — Workflow-only secrets, never passed to container. Example: `GH_WEBHOOK_SECRET`
+Agent job secrets are managed at Admin > Event Handler > Agent Jobs, stored encrypted in SQLite, and injected directly into Docker containers.

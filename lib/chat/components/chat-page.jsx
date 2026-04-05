@@ -5,7 +5,6 @@ import { AppSidebar } from './app-sidebar.js';
 import { Chat } from './chat.js';
 import { SidebarProvider, SidebarInset } from './ui/sidebar.js';
 import { ChatNavProvider } from './chat-nav-context.js';
-import { getChatMessages, getChatData } from '../actions.js';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
@@ -21,6 +20,7 @@ export function ChatPage({ session, needsSetup, chatId }) {
   const [resolvedChatId, setResolvedChatId] = useState(() => chatId ? null : uuidv4());
   const [initialMessages, setInitialMessages] = useState([]);
   const [workspace, setWorkspace] = useState(null);
+  const [chatMode, setChatMode] = useState(null);
 
   const navigateToChat = useCallback((id) => {
     if (id) {
@@ -30,6 +30,7 @@ export function ChatPage({ session, needsSetup, chatId }) {
       window.history.pushState({}, '', '/');
       setInitialMessages([]);
       setWorkspace(null);
+      setChatMode(null);
       setActiveChatId(null);
       setResolvedChatId(uuidv4());
     }
@@ -44,6 +45,7 @@ export function ChatPage({ session, needsSetup, chatId }) {
       } else {
         setInitialMessages([]);
         setWorkspace(null);
+        setChatMode(null);
         setActiveChatId(null);
         setResolvedChatId(uuidv4());
       }
@@ -55,56 +57,61 @@ export function ChatPage({ session, needsSetup, chatId }) {
   // Load messages and workspace data when activeChatId changes
   useEffect(() => {
     if (activeChatId) {
-      getChatMessages(activeChatId).then(async (dbMessages) => {
-        if (dbMessages.length === 0) {
-          // Stale chat (e.g. after login with old UUID) — start fresh
-          setInitialMessages([]);
-          setWorkspace(null);
-          setResolvedChatId(uuidv4());
-          window.history.replaceState({}, '', '/');
-          return;
-        }
-        const uiMessages = [];
-        for (const msg of dbMessages) {
-          let parts;
-          try {
-            const parsed = JSON.parse(msg.content);
-            if (parsed?.type === 'tool-invocation') {
-              parts = [parsed];
-            } else {
+      fetch(`/chat/${activeChatId}/messages`)
+        .then(r => r.json())
+        .then(async (dbMessages) => {
+          if (dbMessages.length === 0) {
+            // Stale chat (e.g. after login with old UUID) — start fresh
+            setInitialMessages([]);
+            setWorkspace(null);
+            setResolvedChatId(uuidv4());
+            window.history.replaceState({}, '', '/');
+            return;
+          }
+          const uiMessages = [];
+          for (const msg of dbMessages) {
+            let parts;
+            try {
+              const parsed = JSON.parse(msg.content);
+              if (parsed?.type === 'tool-invocation') {
+                parts = [parsed];
+              } else {
+                parts = [{ type: 'text', text: msg.content }];
+              }
+            } catch {
               parts = [{ type: 'text', text: msg.content }];
             }
+
+            // Merge consecutive assistant messages into one (matches streaming layout)
+            const prev = uiMessages[uiMessages.length - 1];
+            if (prev && prev.role === 'assistant' && msg.role === 'assistant') {
+              prev.parts.push(...parts);
+              prev.content += '\n' + msg.content;
+            } else {
+              uiMessages.push({
+                id: msg.id,
+                role: msg.role,
+                content: msg.content,
+                parts,
+                createdAt: new Date(msg.createdAt),
+              });
+            }
+          }
+          setInitialMessages(uiMessages);
+
+          // Load chat data (workspace + chat mode)
+          try {
+            const r = await fetch(`/chat/${activeChatId}/data`);
+            const chat = await r.json();
+            setWorkspace(chat?.workspace || null);
+            setChatMode(chat?.chatMode || null);
           } catch {
-            parts = [{ type: 'text', text: msg.content }];
+            setWorkspace(null);
+            setChatMode(null);
           }
 
-          // Merge consecutive assistant messages into one (matches streaming layout)
-          const prev = uiMessages[uiMessages.length - 1];
-          if (prev && prev.role === 'assistant' && msg.role === 'assistant') {
-            prev.parts.push(...parts);
-            prev.content += '\n' + msg.content;
-          } else {
-            uiMessages.push({
-              id: msg.id,
-              role: msg.role,
-              content: msg.content,
-              parts,
-              createdAt: new Date(msg.createdAt),
-            });
-          }
-        }
-        setInitialMessages(uiMessages);
-
-        // Check if this is a code chat
-        try {
-          const chat = await getChatData(activeChatId);
-          setWorkspace(chat?.workspace || null);
-        } catch {
-          setWorkspace(null);
-        }
-
-        setResolvedChatId(activeChatId);
-      });
+          setResolvedChatId(activeChatId);
+        });
     }
   }, [activeChatId]);
 
@@ -128,6 +135,7 @@ export function ChatPage({ session, needsSetup, chatId }) {
               chatId={resolvedChatId}
               initialMessages={initialMessages}
               workspace={workspace}
+              chatMode={chatMode}
             />
           )}
         </SidebarInset>

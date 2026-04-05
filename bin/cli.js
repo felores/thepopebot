@@ -52,13 +52,15 @@ Commands:
   init                              Scaffold a new thepopebot project
   upgrade|update [@beta|version]    Upgrade thepopebot (install, init, build, commit, push)
   setup                             Run interactive setup wizard
+  setup-ssl                         Configure SSL with Let's Encrypt wildcard cert
   setup-telegram                    Reconfigure Telegram webhook
   reset-auth                        Regenerate AUTH_SECRET (invalidates all sessions)
   reset [file]                      Restore a template file (or list available templates)
+  reset-all                         Nuclear reset — restore entire project to fresh init state
+  audit                             Show project state vs. package templates (modified/missing/unknown)
   diff [file]                       Show differences between project files and package templates
   sync <path>                       Sync local package to a test install (build, pack, Docker)
-  set-agent-secret <KEY> [VALUE]    Set a GitHub secret with AGENT_ prefix (also updates .env)
-  set-agent-llm-secret <KEY> [VALUE]  Set a GitHub secret with AGENT_LLM_ prefix
+  sync --fast <path>                Fast sync — copy source into running container, rebuild .next
   set-var <KEY> [VALUE]             Set a GitHub repository variable
   user:password <email>             Change a user's password
 `);
@@ -211,10 +213,13 @@ async function init() {
             const tmplPath = templatePath(relPath, templatesDir);
             const templateExists = fs.existsSync(path.join(templatesDir, tmplPath));
             if (!templateExists) {
-              backupFile(fullPath, relPath);
-              fs.unlinkSync(fullPath);
+              const bd = getBackupDir();
+              const dest = path.join(bd, relPath);
+              fs.mkdirSync(path.dirname(dest), { recursive: true });
+              fs.renameSync(fullPath, dest);
+              backedUp.push(relPath);
               deleted.push(relPath);
-              console.log(`  Deleted ${relPath} (stale managed file)`);
+              console.log(`  Removed ${relPath} (stale managed file)`);
             }
           }
         }
@@ -248,6 +253,7 @@ async function init() {
     const pkg = {
       name: dirName,
       private: true,
+      type: 'module',
       scripts: {
         setup: 'thepopebot setup',
         'setup-telegram': 'thepopebot setup-telegram',
@@ -260,28 +266,26 @@ async function init() {
     fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
     console.log('  Created package.json');
   } else {
-    console.log('  Skipped package.json (already exists)');
-  }
-
-  // Create .gitkeep files for empty dirs
-  const gitkeepDirs = ['cron', 'triggers', 'logs', 'tmp', 'data', 'data/clusters'];
-  for (const dir of gitkeepDirs) {
-    const gitkeep = path.join(cwd, dir, '.gitkeep');
-    if (!fs.existsSync(gitkeep)) {
-      fs.mkdirSync(path.join(cwd, dir), { recursive: true });
-      fs.writeFileSync(gitkeep, '');
+    // Ensure "type": "module" is set for ESM support
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    if (!pkg.type) {
+      pkg.type = 'module';
+      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+      console.log('  Added "type": "module" to package.json');
+    } else {
+      console.log('  Skipped package.json (already exists)');
     }
   }
 
   // Create default skill activation symlinks
-  const defaultSkills = ['browser-tools', 'llm-secrets', 'modify-self'];
+  const defaultSkills = [];
   const activeDir = path.join(cwd, 'skills', 'active');
   fs.mkdirSync(activeDir, { recursive: true });
   for (const skill of defaultSkills) {
     const symlink = path.join(activeDir, skill);
     if (!fs.existsSync(symlink)) {
-      createDirLink(`../${skill}`, symlink);
-      console.log(`  Created skills/active/${skill} → ../${skill}`);
+      createDirLink(`../library/${skill}`, symlink);
+      console.log(`  Created skills/active/${skill} → ../library/${skill}`);
     }
   }
 
@@ -346,10 +350,10 @@ async function init() {
 
 AUTH_SECRET=${authSecret}
 AUTH_TRUST_HOST=true
+DATABASE_PATH=data/db/thepopebot.sqlite
 THEPOPEBOT_VERSION=${version}
 
-# Uncomment to use a custom docker-compose file that won't be overwritten by upgrades.
-# Edit docker-compose.custom.yml with your changes, then uncomment:
+# To enable SSL with Let's Encrypt, run: npx thepopebot setup-ssl
 # COMPOSE_FILE=docker-compose.custom.yml
 `;
     fs.writeFileSync(envPath, seedEnv);
@@ -372,6 +376,36 @@ THEPOPEBOT_VERSION=${version}
 }
 
 /**
+ * Create a timestamped backup directory and return { dir, ts }.
+ */
+function createBackupDir(cwd) {
+  const now = new Date();
+  const ts = now.getFullYear().toString()
+    + String(now.getMonth() + 1).padStart(2, '0')
+    + String(now.getDate()).padStart(2, '0')
+    + '-'
+    + String(now.getHours()).padStart(2, '0')
+    + String(now.getMinutes()).padStart(2, '0')
+    + String(now.getSeconds()).padStart(2, '0');
+  return { dir: path.join(cwd, '.backups', ts), ts };
+}
+
+/**
+ * Move a file or symlink to the backup directory.
+ */
+function backupAndRemove(fullPath, relPath, backupDir) {
+  const dest = path.join(backupDir, relPath);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  if (fs.lstatSync(fullPath).isSymbolicLink()) {
+    const target = fs.readlinkSync(fullPath);
+    fs.symlinkSync(target, dest);
+    fs.unlinkSync(fullPath);
+  } else {
+    fs.renameSync(fullPath, dest);
+  }
+}
+
+/**
  * List all available template files, or restore a specific one.
  */
 function reset(filePath) {
@@ -386,7 +420,7 @@ function reset(filePath) {
       console.log(`  ${destPath(file)}`);
     }
     console.log('\nUsage: thepopebot reset <file>');
-    console.log('Example: thepopebot reset config/SOUL.md\n');
+    console.log('Example: thepopebot reset agent-job/SOUL.md\n');
     return;
   }
 
@@ -400,13 +434,38 @@ function reset(filePath) {
     process.exit(1);
   }
 
+  // Back up existing file before overwriting
+  if (fs.existsSync(dest)) {
+    const { dir, ts } = createBackupDir(cwd);
+    if (fs.statSync(src).isDirectory()) {
+      // Back up all files in the directory
+      function walkBackup(d) {
+        const items = fs.readdirSync(d, { withFileTypes: true });
+        for (const item of items) {
+          const full = path.join(d, item.name);
+          const rel = path.relative(cwd, full);
+          if (item.isDirectory()) {
+            walkBackup(full);
+          } else {
+            backupAndRemove(full, rel, dir);
+          }
+        }
+      }
+      walkBackup(dest);
+      console.log(`\n  Backed up to .backups/${ts}/`);
+    } else {
+      backupAndRemove(dest, filePath, dir);
+      console.log(`\n  Backed up to .backups/${ts}/${filePath}`);
+    }
+  }
+
   if (fs.statSync(src).isDirectory()) {
     console.log(`\nRestoring ${filePath}/...\n`);
     copyDirSyncForce(src, dest, tmplPath);
   } else {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(src, dest);
-    console.log(`\nRestored ${filePath}\n`);
+    console.log(`Restored ${filePath}\n`);
   }
 }
 
@@ -443,7 +502,7 @@ function diff(filePath) {
       console.log('  All files match package templates.');
     }
     console.log('\nUsage: thepopebot diff <file>');
-    console.log('Example: thepopebot diff config/SOUL.md\n');
+    console.log('Example: thepopebot diff agent-job/SOUL.md\n');
     return;
   }
 
@@ -472,6 +531,98 @@ function diff(filePath) {
   }
 }
 
+/**
+ * Audit project state against package templates.
+ * Groups all non-protected files into: matching, modified, missing, unknown.
+ */
+function audit() {
+  const packageDir = path.join(__dirname, '..');
+  const templatesDir = path.join(packageDir, 'templates');
+  const cwd = process.cwd();
+
+  const templateFiles = getTemplateFiles(templatesDir);
+  const matching = [];
+  const modified = [];
+  const missing = [];
+
+  // Check every template file against the project
+  for (const relPath of templateFiles) {
+    const src = path.join(templatesDir, relPath);
+    const outPath = destPath(relPath);
+    const dest = path.join(cwd, outPath);
+
+    if (!fs.existsSync(dest)) {
+      missing.push(outPath);
+    } else {
+      const srcContent = fs.readFileSync(src);
+      const destContent = fs.readFileSync(dest);
+      if (srcContent.equals(destContent)) {
+        matching.push(outPath);
+      } else {
+        modified.push(outPath);
+      }
+    }
+  }
+
+  // Build a set of known template dest paths for lookup
+  const templateDestPaths = new Set(templateFiles.map(f => destPath(f)));
+
+  // Walk the project for unknown files (not in templates, not protected)
+  const unknown = [];
+  function walkProject(dir) {
+    const items = fs.readdirSync(dir, { withFileTypes: true });
+    for (const item of items) {
+      const fullPath = path.join(dir, item.name);
+      const relPath = path.relative(cwd, fullPath);
+      if (isProtected(relPath)) continue;
+      if (item.isDirectory() && !item.isSymbolicLink()) {
+        walkProject(fullPath);
+      } else if (!templateDestPaths.has(relPath)) {
+        unknown.push(relPath);
+      }
+    }
+  }
+  walkProject(cwd);
+
+  // Report
+  console.log('\n  Project audit\n');
+
+  if (modified.length > 0) {
+    console.log(`  Modified (${modified.length}) — template exists, your version differs:`);
+    for (const f of modified) {
+      console.log(`    ${f}`);
+    }
+    console.log('');
+  }
+
+  if (missing.length > 0) {
+    console.log(`  Missing (${missing.length}) — template exists, not in your project:`);
+    for (const f of missing) {
+      console.log(`    ${f}`);
+    }
+    console.log('');
+  }
+
+  if (unknown.length > 0) {
+    console.log(`  Unknown (${unknown.length}) — in your project, no template (reset-all would remove):`);
+    for (const f of unknown) {
+      console.log(`    ${f}`);
+    }
+    console.log('');
+  }
+
+  console.log(`  ${matching.length} file(s) match package templates.`);
+
+  if (modified.length > 0 || missing.length > 0) {
+    console.log('\n  To reset a file:     thepopebot reset <file>');
+    console.log('  To view a diff:      thepopebot diff <file>');
+  }
+  if (unknown.length > 0 || modified.length > 0 || missing.length > 0) {
+    console.log('  To reset everything: thepopebot reset-all');
+  }
+  console.log('');
+}
+
 function copyDirSyncForce(src, dest, templateRelBase = '') {
   fs.mkdirSync(dest, { recursive: true });
   const entries = fs.readdirSync(src, { withFileTypes: true });
@@ -492,8 +643,145 @@ function copyDirSyncForce(src, dest, templateRelBase = '') {
   }
 }
 
+// Paths that reset-all must never touch (relative to project root).
+// Entries ending with '/' are directory prefixes.
+const PROTECTED_PATHS = [
+  '.env',
+  '.env.local',
+  'data/',
+  'logs/',
+  '.git/',
+  '.backups/',
+  'package-lock.json',
+  'package.json',
+  'docker-compose.custom.yml',
+  '.claude/',
+  '.pi/',
+  'skills/',
+  'node_modules/',
+];
+
+function isProtected(relPath) {
+  return PROTECTED_PATHS.some(p =>
+    p.endsWith('/') ? relPath === p.slice(0, -1) || relPath.startsWith(p) : relPath === p
+  );
+}
+
+async function resetAll() {
+  const cwd = process.cwd();
+
+  // Verify this is a thepopebot project
+  const pkgPath = path.join(cwd, 'package.json');
+  if (!fs.existsSync(pkgPath)) {
+    console.error('\n  Not a thepopebot project (no package.json found).\n');
+    process.exit(1);
+  }
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+  if (!deps.thepopebot) {
+    console.error('\n  Not a thepopebot project (thepopebot not in dependencies).\n');
+    process.exit(1);
+  }
+
+  // Dry run — collect all files that would be moved
+  const filesToMove = [];
+  function collectFiles(dir) {
+    const items = fs.readdirSync(dir, { withFileTypes: true });
+    for (const item of items) {
+      const fullPath = path.join(dir, item.name);
+      const relPath = path.relative(cwd, fullPath);
+      if (isProtected(relPath)) continue;
+      if (item.isDirectory() && !item.isSymbolicLink()) {
+        collectFiles(fullPath);
+      } else {
+        filesToMove.push(relPath);
+      }
+    }
+  }
+  collectFiles(cwd);
+
+  if (filesToMove.length === 0) {
+    console.log('\n  Nothing to reset — no non-protected files found.\n');
+    return;
+  }
+
+  const { confirm, isCancel } = await import('@clack/prompts');
+
+  console.log('\n  This will reset your entire project to a fresh thepopebot init state.');
+  console.log(`  ${filesToMove.length} file(s) will be moved to .backups/:\n`);
+  for (const f of filesToMove) {
+    console.log(`    ${f}`);
+  }
+  console.log('\n  Protected (will NOT be touched):');
+  for (const p of PROTECTED_PATHS) {
+    console.log(`    ${p}`);
+  }
+
+  const ok = await confirm({ message: '\nAre you sure? This is the nuclear option.' });
+  if (isCancel(ok) || !ok) {
+    console.log('\n  Cancelled.\n');
+    return;
+  }
+
+  // Move all files to backup
+  const { dir: backupDir, ts } = createBackupDir(cwd);
+
+  for (const relPath of filesToMove) {
+    const fullPath = path.join(cwd, relPath);
+    backupAndRemove(fullPath, relPath, backupDir);
+  }
+
+  // Remove empty directories left behind
+  function removeEmptyDirs(dir) {
+    if (!fs.existsSync(dir)) return;
+    const items = fs.readdirSync(dir, { withFileTypes: true });
+    for (const item of items) {
+      if (item.isDirectory()) {
+        removeEmptyDirs(path.join(dir, item.name));
+      }
+    }
+    const relPath = path.relative(cwd, dir);
+    if (relPath && !isProtected(relPath) && fs.readdirSync(dir).length === 0) {
+      fs.rmdirSync(dir);
+    }
+  }
+  removeEmptyDirs(cwd);
+
+  console.log(`\n  Moved ${filesToMove.length} file(s) to .backups/${ts}/`);
+
+  // Run init to rebuild from templates
+  console.log('\n  Running init to rebuild project...\n');
+  try {
+    execSync('npx thepopebot init --no-install', { stdio: 'inherit', cwd });
+  } catch {
+    console.error('\n  Init failed. Your backup is at .backups/' + ts + '/\n');
+    process.exit(1);
+  }
+
+  // Run npm install separately
+  console.log('\nInstalling dependencies...\n');
+  try {
+    execSync('npm install', { stdio: 'inherit', cwd });
+  } catch {
+    console.error('\n  npm install failed. Your backup is at .backups/' + ts + '/\n');
+    process.exit(1);
+  }
+
+  console.log('\n  Reset complete. Project restored to fresh init state.');
+  console.log(`  Backup: .backups/${ts}/\n`);
+}
+
 function setup() {
   const setupScript = path.join(__dirname, '..', 'setup', 'setup.mjs');
+  try {
+    execFileSync(process.execPath, [setupScript], { stdio: 'inherit', cwd: process.cwd() });
+  } catch {
+    process.exit(1);
+  }
+}
+
+function setupSsl() {
+  const setupScript = path.join(__dirname, '..', 'setup', 'setup-ssl.mjs');
   try {
     execFileSync(process.execPath, [setupScript], { stdio: 'inherit', cwd: process.cwd() });
   } catch {
@@ -720,56 +1008,6 @@ async function promptForValue(key) {
   return value;
 }
 
-async function setAgentSecret(key, value) {
-  if (!key) {
-    console.error('\n  Usage: thepopebot set-agent-secret <KEY> [VALUE]\n');
-    console.error('  Example: thepopebot set-agent-secret ANTHROPIC_API_KEY\n');
-    process.exit(1);
-  }
-
-  if (!value) value = await promptForValue(key);
-
-  const { owner, repo } = loadRepoInfo();
-  const prefixedName = `AGENT_${key}`;
-
-  const { setSecret } = await import(path.join(__dirname, '..', 'setup', 'lib', 'github.mjs'));
-  const { updateEnvVariable } = await import(path.join(__dirname, '..', 'setup', 'lib', 'auth.mjs'));
-
-  const result = await setSecret(owner, repo, prefixedName, value);
-  if (result.success) {
-    console.log(`\n  Set GitHub secret: ${prefixedName}`);
-    updateEnvVariable(key, value);
-    console.log(`  Updated .env: ${key}`);
-    console.log('');
-  } else {
-    console.error(`\n  Failed to set ${prefixedName}: ${result.error}\n`);
-    process.exit(1);
-  }
-}
-
-async function setAgentLlmSecret(key, value) {
-  if (!key) {
-    console.error('\n  Usage: thepopebot set-agent-llm-secret <KEY> [VALUE]\n');
-    console.error('  Example: thepopebot set-agent-llm-secret BRAVE_API_KEY\n');
-    process.exit(1);
-  }
-
-  if (!value) value = await promptForValue(key);
-
-  const { owner, repo } = loadRepoInfo();
-  const prefixedName = `AGENT_LLM_${key}`;
-
-  const { setSecret } = await import(path.join(__dirname, '..', 'setup', 'lib', 'github.mjs'));
-
-  const result = await setSecret(owner, repo, prefixedName, value);
-  if (result.success) {
-    console.log(`\n  Set GitHub secret: ${prefixedName}\n`);
-  } else {
-    console.error(`\n  Failed to set ${prefixedName}: ${result.error}\n`);
-    process.exit(1);
-  }
-}
-
 async function setVar(key, value) {
   if (!key) {
     console.error('\n  Usage: thepopebot set-var <KEY> [VALUE]\n');
@@ -831,6 +1069,9 @@ switch (command) {
   case 'setup':
     setup();
     break;
+  case 'setup-ssl':
+    setupSsl();
+    break;
   case 'setup-telegram':
     setupTelegram();
     break;
@@ -840,6 +1081,12 @@ switch (command) {
   case 'reset':
     reset(args[0]);
     break;
+  case 'reset-all':
+    await resetAll();
+    break;
+  case 'audit':
+    audit();
+    break;
   case 'diff':
     diff(args[0]);
     break;
@@ -848,16 +1095,17 @@ switch (command) {
     await upgrade();
     break;
   case 'sync': {
-    const { sync } = await import('./sync.js');
-    await sync(args[0]);
+    const fast = args.includes('--fast');
+    const syncArgs = args.filter(a => a !== '--fast');
+    if (fast) {
+      const { syncFast } = await import('./sync.js');
+      await syncFast(syncArgs[0]);
+    } else {
+      const { sync } = await import('./sync.js');
+      await sync(syncArgs[0]);
+    }
     break;
   }
-  case 'set-agent-secret':
-    await setAgentSecret(args[0], args[1]);
-    break;
-  case 'set-agent-llm-secret':
-    await setAgentLlmSecret(args[0], args[1]);
-    break;
   case 'set-var':
     await setVar(args[0], args[1]);
     break;

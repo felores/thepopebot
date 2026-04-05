@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { ChevronDownIcon, CheckIcon, SearchIcon } from '../icons.js';
 import { cn } from '../../utils.js';
 
-export function Combobox({ options = [], value, onChange, placeholder = 'Select...', loading = false, disabled = false, highlight = false }) {
+export function Combobox({ options = [], value, onChange, placeholder = 'Select...', loading = false, disabled = false, highlight = false, side = 'bottom', onOpen, triggerClassName, triggerLabel }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const ref = useRef(null);
@@ -39,10 +39,11 @@ export function Combobox({ options = [], value, onChange, placeholder = 'Select.
     };
   }, [open]);
 
-  // Auto-focus search input when opened
+  // Auto-focus search input when opened + call onOpen
   useEffect(() => {
     if (open) {
       setTimeout(() => inputRef.current?.focus(), 0);
+      onOpen?.();
     }
   }, [open]);
 
@@ -58,7 +59,7 @@ export function Combobox({ options = [], value, onChange, placeholder = 'Select.
         type="button"
         disabled={disabled}
         onClick={() => !disabled && setOpen(!open)}
-        className={cn(
+        className={triggerClassName || cn(
           'flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors w-full',
           disabled
             ? 'border-border bg-muted text-muted-foreground cursor-not-allowed opacity-60'
@@ -67,14 +68,21 @@ export function Combobox({ options = [], value, onChange, placeholder = 'Select.
               : 'border-border bg-background text-foreground hover:bg-muted cursor-pointer'
         )}
       >
-        <span className={cn('flex-1 text-left truncate', !value && 'text-muted-foreground')}>
-          {value ? selectedLabel : placeholder}
-        </span>
-        <ChevronDownIcon size={14} className={cn('text-muted-foreground transition-transform shrink-0', open && 'rotate-180')} />
+        {triggerLabel || (
+          <>
+            <span className={cn('flex-1 text-left truncate', !value && 'text-muted-foreground')}>
+              {value ? selectedLabel : placeholder}
+            </span>
+            <ChevronDownIcon size={14} className={cn('text-muted-foreground transition-transform shrink-0', open && 'rotate-180')} />
+          </>
+        )}
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 w-full min-w-[200px] overflow-hidden rounded-lg border border-border bg-background shadow-lg">
+        <div className={cn(
+          "absolute z-50 w-full min-w-[200px] overflow-hidden rounded-lg border border-border bg-background shadow-lg",
+          side === 'top' ? 'bottom-full mb-1' : 'mt-1'
+        )}>
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
             <SearchIcon size={14} className="text-muted-foreground shrink-0" />
             <input
@@ -99,7 +107,7 @@ export function Combobox({ options = [], value, onChange, placeholder = 'Select.
                   onClick={() => handleSelect(opt.value)}
                   className={cn(
                     'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm text-left transition-colors',
-                    'hover:bg-muted',
+                    'hover:bg-accent',
                     opt.value === value && 'bg-muted'
                   )}
                 >
